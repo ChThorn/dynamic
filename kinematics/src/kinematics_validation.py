@@ -49,10 +49,23 @@ class KinematicsValidator:
         self.ik = inverse_kinematics
         self.n_joints = forward_kinematics.n_joints
         
+        # Simple workspace bounds for validation (in meters)
+        self.workspace_bounds = {
+            'x_range': [-1.0, 1.0],
+            'y_range': [-1.0, 1.0], 
+            'z_range': [0.06, 1.4]  # Above 60mm table to maximum reach
+        }
+        
         # Results storage
         self.validation_results = {}
         
-        logger.info("Kinematics validator initialized")
+        logger.info("Kinematics validator initialized with constraint-free modules")
+    
+    def _simple_workspace_check(self, position: np.ndarray) -> bool:
+        """Simple workspace bounds check for validation purposes."""
+        return (self.workspace_bounds['x_range'][0] <= position[0] <= self.workspace_bounds['x_range'][1] and
+                self.workspace_bounds['y_range'][0] <= position[1] <= self.workspace_bounds['y_range'][1] and
+                self.workspace_bounds['z_range'][0] <= position[2] <= self.workspace_bounds['z_range'][1])
     
     def verify_screw_axes_theory(self) -> Dict[str, Any]:
         """
@@ -148,13 +161,14 @@ class KinematicsValidator:
             attempts += 1
             
             # Generate random configuration
-            q_test = np.random.uniform(limits_lower[0], limits_upper[1])
+            # q_test = np.random.uniform(limits_lower[0], limits_upper[1])
+            q_test = np.random.uniform(limits_lower, limits_upper, size=self.n_joints)
             
             # Check if within workspace (if required)
-            T_target = self.fk.compute_forward_kinematics(q_test, suppress_warnings=True)
+            T_target = self.fk.compute_forward_kinematics(q_test)
             pos = T_target[:3, 3]
             
-            if workspace_only and not self.fk._check_workspace(pos):
+            if workspace_only and not self._simple_workspace_check(pos):
                 continue
                 
             tested += 1
@@ -169,7 +183,7 @@ class KinematicsValidator:
                 success_count += 1
                 
                 # Verify solution accuracy
-                T_check = self.fk.compute_forward_kinematics(q_solution, suppress_warnings=True)
+                T_check = self.fk.compute_forward_kinematics(q_solution)
                 
                 # Position error
                 pos_err = np.linalg.norm(T_check[:3, 3] - T_target[:3, 3])
@@ -229,51 +243,24 @@ class KinematicsValidator:
     def analyze_workspace_coverage(self, num_samples: int = 1000, 
                                 grid_resolution: int = 20) -> Dict[str, Any]:
         """
-        Analyze workspace coverage with geometric pre-filtering.
+        Fast workspace coverage analysis using only forward kinematics.
         """
-        logger.info(f"Analyzing workspace coverage with {num_samples} samples")
+        logger.info(f"Analyzing workspace coverage with {num_samples} samples (FK-only)")
         
-        # Monte Carlo sampling with pre-filtering
         reachable_positions = []
-        unreachable_positions = []
         limits_lower, limits_upper = self.fk.get_joint_limits()
         
-        # Reduced IK parameters for workspace analysis
-        fast_ik_params = {
-            'max_iters': 50,           # Reduced from 300
-            'num_attempts': 5,         # Reduced from 100
-            'pos_tol': 5e-3,          # Relaxed tolerance
-            'rot_tol': 1e-2,          # Relaxed tolerance
-        }
-        
-        tested_samples = 0
-        while len(reachable_positions) + len(unreachable_positions) < num_samples:
-            q = np.random.uniform(limits_lower, limits_upper)
-            T = self.fk.compute_forward_kinematics(q, suppress_warnings=True)
+        # Use only FK - much faster and more reliable
+        for _ in range(num_samples):
+            q = np.random.uniform(limits_lower, limits_upper, size=self.n_joints)
+            T = self.fk.compute_forward_kinematics(q)
             pos = T[:3, 3]
             
-            # Pre-filter with quick geometric check
-            if not self._is_pose_reachable(pos):
-                unreachable_positions.append(pos)
-                continue
-                
-            # Only test IK on geometrically reachable poses
-            if self.fk._check_workspace(pos):
-                # Quick IK test with reduced parameters
-                q_sol, converged = self.ik.solve(T, **fast_ik_params)
-                if converged:
-                    reachable_positions.append(pos)
-                else:
-                    unreachable_positions.append(pos)
-            else:
-                unreachable_positions.append(pos)
-            
-            tested_samples += 1
-            if tested_samples > num_samples * 3:  # Safety limit
-                break
-
+            # Simple workspace check
+            if self._simple_workspace_check(pos):
+                reachable_positions.append(pos)
+        
         reachable_positions = np.array(reachable_positions)
-        unreachable_positions = np.array(unreachable_positions)
         
         # Compute workspace statistics
         if len(reachable_positions) > 0:
@@ -287,24 +274,23 @@ class KinematicsValidator:
         else:
             workspace_bounds = None
         
-        # Skip expensive grid analysis for now
+        # Skip expensive grid and IK testing
         grid_coverage = {'resolution': 0, 'total_points': 0, 'reachable_points': 0, 'coverage_ratio': 0.0}
         
-        total_tested = len(reachable_positions) + len(unreachable_positions)
-        coverage_percentage = len(reachable_positions) / total_tested * 100 if total_tested > 0 else 0
+        coverage_percentage = len(reachable_positions) / num_samples * 100
         
         results = {
-            'num_samples': total_tested,
+            'num_samples': num_samples,
             'reachable_positions': reachable_positions,
-            'unreachable_positions': unreachable_positions,
+            'unreachable_positions': np.array([]),  # Not computed in FK-only mode
             'workspace_bounds': workspace_bounds,
             'coverage_percentage': coverage_percentage,
             'grid_coverage': grid_coverage
         }
         
-        logger.info(f"Workspace Coverage Results:")
+        logger.info(f"Workspace Coverage Results (FK-only):")
         logger.info(f"  Coverage: {coverage_percentage:.1f}%")
-        logger.info(f"  Reachable points: {len(reachable_positions)}/{total_tested}")
+        logger.info(f"  Reachable points: {len(reachable_positions)}/{num_samples}")
         
         if workspace_bounds:
             logger.info(f"  X range: [{workspace_bounds['x_range'][0]:.3f}, {workspace_bounds['x_range'][1]:.3f}] m")
@@ -330,9 +316,9 @@ class KinematicsValidator:
         # Forward kinematics benchmark
         fk_times = []
         for _ in range(num_fk_tests):
-            q = np.random.uniform(limits_lower[0], limits_upper[1])
+            q = np.random.uniform(limits_lower, limits_upper, size=self.n_joints)
             start_time = time.time()
-            T = self.fk.compute_forward_kinematics(q, suppress_warnings=True)
+            T = self.fk.compute_forward_kinematics(q)
             fk_times.append(time.time() - start_time)
         
         # Inverse kinematics benchmark
@@ -342,10 +328,10 @@ class KinematicsValidator:
         for _ in range(num_ik_tests):
             # Generate target pose
             q_target = np.random.uniform(limits_lower, limits_upper, size=(self.n_joints,))
-            T_target = self.fk.compute_forward_kinematics(q_target, suppress_warnings=True)
+            T_target = self.fk.compute_forward_kinematics(q_target)
             
             # Only test if within workspace
-            if not self.fk._check_workspace(T_target[:3, 3]):
+            if not self._simple_workspace_check(T_target[:3, 3]):
                 continue
             
             start_time = time.time()
@@ -427,7 +413,7 @@ class KinematicsValidator:
                 q_rad, T_recorded = self._convert_from_robot_units(q_deg, tcp_recorded_raw)
                 
                 # Test forward kinematics
-                T_fk = self.fk.compute_forward_kinematics(q_rad, suppress_warnings=True)
+                T_fk = self.fk.compute_forward_kinematics(q_rad)
                 
                 # Position error
                 pos_err = np.linalg.norm(T_fk[:3, 3] - T_recorded[:3, 3])
@@ -810,23 +796,21 @@ class KinematicsValidator:
         return recommendations
     
     def _is_pose_reachable(self, pos: np.ndarray) -> bool:
-        """Quick geometric reachability check before expensive IK."""
-        # Robot reach limits from config
-        max_reach = 0.730  # meters, from your constraints.yaml
-        min_reach = 0.100  # minimum reach (avoid base collision)
+        """More aggressive geometric reachability check."""
+        max_reach = 0.650  # Reduced from 0.730 for safety margin
+        min_reach = 0.150  # Increased minimum reach
         
-        # Distance from base (robot mounted on floor)
-        horizontal_dist = np.linalg.norm(pos[:2])  # X-Y distance
-        total_dist = np.linalg.norm(pos)  # 3D distance
+        horizontal_dist = np.linalg.norm(pos[:2])
+        total_dist = np.linalg.norm(pos)
         
-        # Basic geometric constraints
-        if total_dist > max_reach:
+        # More restrictive geometric constraints
+        if total_dist > max_reach or total_dist < min_reach:
             return False
-        if horizontal_dist < min_reach:
+        if pos[2] < 0.10 or pos[2] > 1.0:  # Tighter Z bounds
             return False
-        if pos[2] < 0.06:  # Below work surface
-            return False
-        if pos[2] > 1.1:   # Too high
+        
+        # Avoid extreme orientations near workspace boundaries
+        if horizontal_dist > 0.5 and pos[2] < 0.3:  # Avoid low + far poses
             return False
             
         return True

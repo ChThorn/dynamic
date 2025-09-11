@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Inverse Kinematics Module for 6-DOF Robot Manipulator
+Constraint-Free Inverse Kinematics Module for 6-DOF Robot Manipulator
 
 This module implements robust inverse kinematics solving using damped least squares
-method with multiple optimization strategies and fallback mechanisms.
+method with multiple optimization strategies. Pure mathematical computation without
+constraint checking (Approach 1 - constraints handled at planning layer).
 
 Key Features:
 - Damped Least Squares (DLS) method
@@ -12,7 +13,7 @@ Key Features:
 - Perturbation-based fallback
 - Singularity handling
 - Adaptive damping and step scaling
-- Constraint checking integration
+- Pure mathematical computation (no workspace/constraint checking)
 
 Author: Robot Control Team
 """
@@ -30,11 +31,13 @@ class InverseKinematicsError(Exception):
     pass
 
 class InverseKinematics:
-    """Robust inverse kinematics solver using damped least squares."""
+    """Constraint-free inverse kinematics solver using damped least squares."""
     
     def __init__(self, forward_kinematics, default_params: Optional[Dict[str, Any]] = None):
         """
-        Initialize inverse kinematics solver.
+        Initialize constraint-free inverse kinematics solver.
+        
+        Pure mathematical computation without constraint checking (Approach 1).
         
         Args:
             forward_kinematics: ForwardKinematics instance
@@ -68,7 +71,7 @@ class InverseKinematics:
             'average_iterations': 0.0
         }
         
-        logger.info("Inverse kinematics solver initialized")
+        logger.info("Constraint-free inverse kinematics solver initialized")
     
     def solve(self, T_des: np.ndarray, q_init: Optional[np.ndarray] = None,
               **kwargs) -> Tuple[Optional[np.ndarray], bool]:
@@ -132,7 +135,7 @@ class InverseKinematics:
     def _check_home_position(self, T_des: np.ndarray, params: Dict[str, Any]) -> Tuple[np.ndarray, bool]:
         """Check if desired pose is the home position."""
         q_home = np.zeros(self.n_joints)
-        T_home = self.fk.compute_forward_kinematics(q_home, suppress_warnings=True)
+        T_home = self.fk.compute_forward_kinematics(q_home)
         
         pos_err = norm(T_des[:3, 3] - T_home[:3, 3])
         rot_err = self._rotation_error(T_des[:3, :3], T_home[:3, :3])
@@ -258,7 +261,7 @@ class InverseKinematics:
                 iteration += 1
                 
                 # Compute current pose error
-                T_cur = self.fk.compute_forward_kinematics(q, suppress_warnings=True)
+                T_cur = self.fk.compute_forward_kinematics(q)
                 error_twist = self._matrix_log6(inv(T_cur) @ T_des)
                 
                 rot_err = norm(error_twist[:3])
@@ -390,7 +393,7 @@ class InverseKinematics:
                 J_s[:, i] = self._adjoint_matrix(T_temp) @ self.S[:, i]
             T_temp = T_temp @ self.fk.matrix_exp6(self.S[:, i] * q[i])
         
-        T_final = self.fk.compute_forward_kinematics(q, suppress_warnings=True)
+        T_final = self.fk.compute_forward_kinematics(q)
         return self._adjoint_matrix(inv(T_final)) @ J_s
     
     def _compute_dls_step(self, Jb: np.ndarray, error_twist: np.ndarray, 
@@ -413,7 +416,7 @@ class InverseKinematics:
     
     def _compute_pose_error(self, T_des: np.ndarray, q: np.ndarray) -> Tuple[float, float]:
         """Compute position and rotation error."""
-        T_actual = self.fk.compute_forward_kinematics(q, suppress_warnings=True)
+        T_actual = self.fk.compute_forward_kinematics(q)
         pos_err = norm(T_actual[:3, 3] - T_des[:3, 3])
         rot_err = self._rotation_error(T_actual[:3, :3], T_des[:3, :3])
         return pos_err, rot_err

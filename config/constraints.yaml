@@ -1,49 +1,49 @@
 # Robot model information
 robot_info:
   model: "RB3-730ES-U"
-  reach: 0.730  # meters
-  payload: 3.0  # kg
+  reach: 0.730 # meters
+  payload: 3.0 # kg
   dof: 6
 
 # Joint limits in degrees (will be converted to radians internally)
 joint_limits:
   # Joint limits based on RB3-730 specifications
-  j1:  #base
-    min: -360  # degrees
-    max: 360   # degrees
+  j1: #base
+    min: -360 # degrees
+    max: 360 # degrees
   # j2:
-  #   min: -360  # degrees  
+  #   min: -360  # degrees
   #   max: 360   # degrees
-  j2:  # shoulder
-    min: -360  # degrees
-    max: 360  # degrees for table-mounted arm (-90° to +180° or -120° to +150°)
-  j3:  # elbow
-    min: -150  # degrees (RB3-730 specific limit)
-    max: 150   # degrees
-  j4:  # wrist 1
-    min: -360  # degrees
-    max: 360   # degrees
-  j5:  # wrist 2
-    min: -360  # degrees
-    max: 360   # degrees
-  j6:  # wrist 3
-    min: -360  # degrees
-    max: 360   # degrees
+  j2: # shoulder
+    min: -360 # degrees
+    max: 360 # degrees for table-mounted arm (-90° to +180° or -120° to +150°)
+  j3: # elbow
+    min: -150 # degrees (RB3-730 specific limit)
+    max: 150 # degrees
+  j4: # wrist 1
+    min: -360 # degrees
+    max: 360 # degrees
+  j5: # wrist 2
+    min: -360 # degrees
+    max: 360 # degrees
+  j6: # wrist 3
+    min: -360 # degrees
+    max: 360 # degrees
 
 # Workspace boundaries in meters
-# Conservative bounds based on actual reachability testing
+# Robot mounted on floor with 60mm table surface
 workspace:
-  x_min: -0.7   # meters (more realistic for 730mm reach)
-  x_max: 0.7    # meters
-  y_min: -0.7   # meters  
-  y_max: 0.7    # meters
-  z_min: 0.06    # 6 cm above table
-  z_max: 1.1    # meters (allow higher positions)
-  
+  x_min: -0.7 # meters (more realistic for 730mm reach)
+  x_max: 0.7 # meters
+  y_min: -0.7 # meters
+  y_max: 0.7 # meters
+  z_min: 0.06 # 60mm table height (robot base on floor)
+  z_max: 1.1 # meters (allow higher positions)
+
 # Obstacle definitions (optional)
 obstacles:
-  enabled: false  # set to true to enable obstacle checking
-  list: []        # list of obstacle definitions
+  enabled: false # set to true to enable obstacle checking
+  list: [] # list of obstacle definitions
   # Example obstacles (uncomment and modify as needed):
   # list:
   #   - name: "table"
@@ -55,7 +55,7 @@ obstacles:
   #     center: [-0.3, 0.3, 0.5]  # meters
   #     radius: 0.05              # meters
   #     height: 1.0               # meters
-    
+
 orientation_limits:
   enabled: false
   roll_min: -180
@@ -68,15 +68,15 @@ orientation_limits:
 # Safety margins (reduces effective workspace for extra safety)
 safety_margins:
   enabled: true
-  margin_x: 0.05  # meters - reduce X workspace by this amount on each side
-  margin_y: 0.05  # meters - reduce Y workspace by this amount on each side
-  margin_z: 0.05  # meters - reduce Z workspace by this amount on top/bottom
-  
+  margin_x: 0.05 # meters - reduce X workspace by this amount on each side
+  margin_y: 0.05 # meters - reduce Y workspace by this amount on each side
+  margin_z: 0.05 # meters - reduce Z workspace by this amount on top/bottom
+
 # Workspace validation settings
 validation:
-  path_resolution: 0.01     # meters - check every 1cm along path
-  strict_boundaries: true   # reject ANY point outside boundaries
-  shape: "rectangular"      # currently only rectangular supported
+  path_resolution: 0.01 # meters - check every 1cm along path
+  strict_boundaries: true # reject ANY point outside boundaries
+  shape: "rectangular" # currently only rectangular supported
 
 # Planning configuration
 planning:
@@ -85,21 +85,21 @@ planning:
     enabled: true
     iterations: 2
   quality_metrics:
-    smoothness_threshold: 0.1  # rad/waypoint
-    max_velocity_threshold: 1.0  # rad/s
-    max_jerk_threshold: 10.0     # rad/s^3
+    smoothness_threshold: 0.1 # rad/waypoint
+    max_velocity_threshold: 1.0 # rad/s
+    max_jerk_threshold: 10.0 # rad/s^3
 
 # Description and notes
 description: |
   Consolidated robot configuration file for RB3-730ES-U robot.
-  
+
   All spatial dimensions are in meters (SI units) for consistency.
   All angular dimensions are in degrees and converted to radians internally.
-  
+
   Coordinate system:
   - X: Forward(+) / Backward(-) from robot base
   - Y: Right(+) / Left(-) from robot base  
   - Z: Up(+) / Down(-) from robot base
-  
+
   Safety margins create a smaller "safe zone" within the physical boundaries
   to account for robot dynamics, sensor noise, and mechanical tolerances.

@@ -160,12 +160,13 @@ def test_workspace_exploration(fk, ik):
             q_random = np.random.uniform(limits_lower, limits_upper)
             
             # FK to get target pose
-            T_target = fk.compute_forward_kinematics(q_random, suppress_warnings=True)
+            T_target = fk.compute_forward_kinematics(q_random)
             
             # Check if within workspace constraints
             pos = T_target[:3, 3]
-            if not fk._check_workspace(pos):
-                continue
+            # For now, skip workspace checking in exploration (will be handled by planning layer)
+            # if not constraints_checker.check_workspace(pos):
+            #     continue
             
             # Solve IK
             start_time = time.time()
@@ -177,7 +178,7 @@ def test_workspace_exploration(fk, ik):
                 successful_tests += 1
                 
                 # Check accuracy
-                T_check = fk.compute_forward_kinematics(q_solution, suppress_warnings=True)
+                T_check = fk.compute_forward_kinematics(q_solution)
                 pos_err = np.linalg.norm(T_check[:3, 3] - T_target[:3, 3])
                 position_errors.append(pos_err)
                 
@@ -373,7 +374,7 @@ def validate_real_robot_data_direct(fk, ik):
                 T_recorded[:3, 3] = tcp_pos_m
                 
                 # Test forward kinematics
-                T_fk = fk.compute_forward_kinematics(q_rad, suppress_warnings=True)
+                T_fk = fk.compute_forward_kinematics(q_rad)
                 
                 # Calculate errors
                 pos_err = np.linalg.norm(T_fk[:3, 3] - T_recorded[:3, 3])

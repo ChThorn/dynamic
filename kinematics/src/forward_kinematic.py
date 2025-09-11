@@ -34,22 +34,21 @@ class ForwardKinematics:
     
     def __init__(self, constraints_path: Optional[str] = None):
         """
-        Initialize forward kinematics with robot parameters.
+        Initialize constraint-free forward kinematics with robot parameters.
         
         Args:
-            constraints_path: Path to constraints YAML file
+            constraints_path: Path to constraints YAML file (used only for joint limits)
         """
         self.constraints_path = constraints_path or self._get_default_constraints_path()
-        self.constraints = self._load_constraints()
         
-        # Get hardcoded robot parameters
+        # Get hardcoded robot parameters (only joint limits loaded from config)
         self.S, self.M, self.joint_limits = self._get_robot_parameters()
         self.n_joints = self.S.shape[1]
         
         if self.n_joints == 0:
             raise ForwardKinematicsError("No active joints found in the kinematic chain.")
             
-        logger.info(f"Forward kinematics initialized with {self.n_joints} joints")
+        logger.info(f"Constraint-free forward kinematics initialized with {self.n_joints} joints")
     
     def _get_default_constraints_path(self) -> str:
         """Get default path to constraints file."""
@@ -67,45 +66,20 @@ class ForwardKinematics:
         # Return first path as default even if it doesn't exist
         return possible_paths[0]
     
-    def _load_constraints(self) -> dict:
-        """Load workspace and orientation constraints."""
+    def _load_joint_limits_from_config(self) -> dict:
+        """Load joint limits configuration only."""
         if not os.path.exists(self.constraints_path):
-            logger.warning(f"Constraints file not found: {self.constraints_path}")
-            return self._get_default_constraints()
+            logger.warning(f"Constraints file not found: {self.constraints_path}, using default joint limits")
+            return {}
         
         try:
             with open(self.constraints_path, "r") as f:
-                constraints = yaml.safe_load(f)
-            logger.info(f"Constraints loaded from: {self.constraints_path}")
-            return constraints or {}
+                config = yaml.safe_load(f)
+            logger.info(f"Joint limits loaded from: {self.constraints_path}")
+            return config.get('joint_limits', {}) if config else {}
         except Exception as e:
-            logger.error(f"Failed to load constraints from {self.constraints_path}: {e}")
-            return self._get_default_constraints()
-    
-    def _get_default_constraints(self) -> dict:
-        """Get default workspace constraints."""
-        return {
-            "workspace": {
-                "x_min": -1.0, "x_max": 1.0,
-                "y_min": -1.0, "y_max": 1.0, 
-                "z_min": 0.0, "z_max": 2.0,
-                "safety_margins": {
-                    "enabled": False,
-                    "margin_x": 0.0,
-                    "margin_y": 0.0,
-                    "margin_z": 0.0
-                }
-            },
-            "orientation_limits": {
-                "roll_min": -180, "roll_max": 180,
-                "pitch_min": -180, "pitch_max": 180,
-                "yaw_min": -180, "yaw_max": 180
-            },
-            "obstacles": {
-                "enabled": False,
-                "list": []
-            }
-        }
+            logger.error(f"Failed to load joint limits from {self.constraints_path}: {e}")
+            return {}
     
     def _get_robot_parameters(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -145,7 +119,7 @@ class ForwardKinematics:
     def _load_joint_limits(self) -> np.ndarray:
         """Load joint limits from configuration or use defaults."""
         try:
-            joint_config = self.constraints.get('joint_limits', {})
+            joint_config = self._load_joint_limits_from_config()
             if not joint_config:
                 logger.warning("No joint limits found in config, using default ±π limits")
                 return self._get_default_joint_limits()
@@ -244,17 +218,16 @@ class ForwardKinematics:
         T[:3, 3] = p
         return T
     
-    def compute_forward_kinematics(self, q: np.ndarray, 
-                                 suppress_warnings: bool = False) -> np.ndarray:
+    def compute_forward_kinematics(self, q: np.ndarray) -> np.ndarray:
         """
         Compute forward kinematics using Product of Exponentials.
         
+        Pure mathematical computation without constraint checking (Approach 1).
         The forward kinematics is computed as:
         T(q) = exp([S₁]q₁) · exp([S₂]q₂) · ... · exp([Sₙ]qₙ) · M
         
         Args:
             q: Joint angles in radians (n_joints,)
-            suppress_warnings: If True, suppress workspace/constraint warnings
             
         Returns:
             4x4 homogeneous transformation matrix of end-effector pose
@@ -279,25 +252,9 @@ class ForwardKinematics:
         # Apply home configuration
         T = T @ self.M
         
-        # Check constraints if warnings are enabled
-        if not suppress_warnings:
-            self._check_constraints(T)
-        
         return T
     
-    def _check_constraints(self, T: np.ndarray):
-        """Check workspace and orientation constraints."""
-        pos = T[:3, 3]
-        rpy = self.matrix_to_rpy(T[:3, :3])
-        
-        if not self._check_workspace(pos):
-            logger.warning(f"FK: Position {pos} out of workspace bounds")
-        
-        if not self._check_orientation(rpy):
-            logger.warning(f"FK: Orientation {rpy} out of limits")
-        
-        if not self._check_obstacles(pos):
-            logger.warning(f"FK: Position {pos} collides with obstacle")
+    
     
     def _check_workspace(self, pos: np.ndarray) -> bool:
         """Check if position is within workspace bounds."""
@@ -312,11 +269,8 @@ class ForwardKinematics:
         z_min = ws.get("z_min", 0.0)
         z_max = ws.get("z_max", 2.0)
 
-        # Apply safety margins if enabled (support both nested and top-level keys)
+        # Apply safety margins if enabled
         safety = ws.get("safety_margins", {})
-        if not safety or not safety.get("enabled", False):
-            # Fallback to top-level safety_margins from YAML
-            safety = self.constraints.get("safety_margins", {})
         if safety.get("enabled", False):
             margin_x = safety.get("margin_x", 0.0)
             margin_y = safety.get("margin_y", 0.0)
