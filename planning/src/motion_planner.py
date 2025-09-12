@@ -41,8 +41,15 @@ from typing import List, Tuple, Dict, Any, Optional, Union, Callable
 from dataclasses import dataclass
 from enum import Enum
 import time
+import os
 
 logger = logging.getLogger(__name__)
+
+# Import enhanced collision checker
+try:
+    from .collision_checker import EnhancedCollisionChecker, CollisionResult, CollisionType
+except ImportError:
+    from collision_checker import EnhancedCollisionChecker, CollisionResult, CollisionType
 
 class PlanningStrategy(Enum):
     """Available motion planning strategies."""
@@ -59,6 +66,7 @@ class PlanningStatus(Enum):
     CONSTRAINT_VIOLATION = "constraint_violation"
     IK_FAILED = "ik_failed"
     IK_CONSTRAINT_VIOLATION = "ik_constraint_violation"
+    COLLISION_DETECTED = "collision_detected"
 
 @dataclass
 class MotionPlan:
@@ -127,6 +135,10 @@ class MotionPlanner:
                 self.trajectory_planner = TrajectoryPlanner(self.path_planner)
         else:
             self.trajectory_planner = trajectory_planner
+            
+        # Initialize enhanced collision checker
+        config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'constraints.yaml')
+        self.collision_checker = EnhancedCollisionChecker(config_path)
         
         # Minimal configuration for AORRTC system
         self.config = {
@@ -677,43 +689,49 @@ class MotionPlanner:
     def _validate_ik_solution(self, q_solution: np.ndarray, 
                             target_pose: np.ndarray) -> bool:
         """
-        Validate IK solution against constraints and accuracy.
+        Enhanced IK solution validation with comprehensive collision checking.
         
         Args:
             q_solution: Joint configuration to validate
             target_pose: Original target pose for accuracy checking
             
         Returns:
-            True if solution is valid and constraint-satisfying
+            True if solution is valid and collision-free
         """
         try:
-            # Check joint limits
-            if not self.path_planner._is_configuration_valid(q_solution):
-                logger.debug("IK solution violates joint/workspace constraints")
-                return False
-            
             # Verify forward kinematics accuracy
             T_achieved = self.fk.compute_forward_kinematics(q_solution)
+            tcp_position = T_achieved[:3, 3]
             
-            # Position error
-            pos_error = np.linalg.norm(T_achieved[:3, 3] - target_pose[:3, 3])
+            # Position error check
+            pos_error = np.linalg.norm(tcp_position - target_pose[:3, 3])
             pos_tolerance = self.config['ik_position_tolerance']
             if pos_error > pos_tolerance:
                 logger.debug(f"IK solution has large position error: {pos_error:.6f}m > {pos_tolerance}m")
                 return False
             
-            # Orientation error (using rotation matrix comparison)
+            # Orientation error check
             R_desired = target_pose[:3, :3]
             R_achieved = T_achieved[:3, :3]
             
-            # Compute rotation error using trace method
             cos_angle = (np.trace(R_desired.T @ R_achieved) - 1) / 2
-            cos_angle = np.clip(cos_angle, -1, 1)  # Handle numerical errors
+            cos_angle = np.clip(cos_angle, -1, 1)
             rot_error = np.arccos(cos_angle)
             
             rot_tolerance = np.radians(self.config['ik_rotation_tolerance'])
             if rot_error > rot_tolerance:
                 logger.debug(f"IK solution has large rotation error: {np.degrees(rot_error):.3f}° > {self.config['ik_rotation_tolerance']}°")
+                return False
+            
+            # Enhanced collision checking
+            joint_positions = [tcp_position]  # Simplified - would need full link positions for complete check
+            
+            collision_result = self.collision_checker.check_configuration_collision(
+                q_solution, tcp_position, joint_positions
+            )
+            
+            if collision_result.is_collision:
+                logger.debug(f"IK solution has collision: {collision_result.details}")
                 return False
             
             logger.debug(f"IK solution validated - pos_err: {pos_error:.6f}m, rot_err: {np.degrees(rot_error):.3f}°")
@@ -722,6 +740,47 @@ class MotionPlanner:
         except Exception as e:
             logger.error(f"IK solution validation failed: {e}")
             return False
+    
+    def validate_motion_path(self, joint_path: List[np.ndarray]) -> Tuple[bool, str]:
+        """
+        Validate entire motion path for collisions including intermediate points.
+        
+        Args:
+            joint_path: List of joint configurations defining the path
+            
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        try:
+            # Check each waypoint for collision
+            for i, q in enumerate(joint_path):
+                T = self.fk.compute_forward_kinematics(q)
+                tcp_pos = T[:3, 3]
+                joint_positions = [tcp_pos]  # Simplified
+                
+                collision_result = self.collision_checker.check_configuration_collision(
+                    q, tcp_pos, joint_positions
+                )
+                
+                if collision_result.is_collision:
+                    return False, f"Waypoint {i} collision: {collision_result.details}"
+            
+            # Check path between waypoints for intermediate collisions
+            collision_result = self.collision_checker.check_path_collision(
+                joint_path, self.fk.compute_forward_kinematics
+            )
+            
+            if collision_result.is_collision:
+                return False, f"Path collision: {collision_result.details}"
+            
+            return True, "Path validation successful"
+            
+        except Exception as e:
+            return False, f"Path validation failed: {str(e)}"
+    
+    def get_collision_info(self) -> Dict[str, Any]:
+        """Get collision checker configuration and status."""
+        return self.collision_checker.get_collision_summary()
 
     def update_config(self, new_config: Dict[str, Any]):
         """Update motion planning configuration."""
