@@ -1,7 +1,7 @@
 ================================================================================
 COMPREHENSIVE ROBOT KINEMATICS VALIDATION REPORT
 ================================================================================
-Generated: 2025-09-12 08:19:27
+Generated: 2025-09-12 13:10:35
 Robot: RB3-730ES-U (6-DOF)
 Joints: 6
 
@@ -21,9 +21,9 @@ FK-IK CONSISTENCY TEST:
   Mean computation time: 0.6 ms
 
 WORKSPACE COVERAGE ANALYSIS:
-  Coverage: 55.6%
-  Reachable points: 445/800
-  Volume estimate: 0.644 m³
+  Coverage: 56.8%
+  Reachable points: 454/800
+  Volume estimate: 0.702 m³
 
 
 REAL ROBOT DATA VALIDATION:

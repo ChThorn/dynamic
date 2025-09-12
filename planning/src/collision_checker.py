@@ -1,22 +1,19 @@
 #!/usr/bin/env python3
 """
-Enhanced Collision Checker Module
+Clean Collision Checker Module for RB3-730ES-U Robot
 
-This module provides minimal, essential collision detection for robot motion planning:
-- Self-collision detection between robot links
-- Floor constraint (robot base at z=0)
+Essential collision detection for robot motion planning:
+- Self-collision detection using URDF-derived parameters
+- Floor constraint (robot base at z=0) 
 - Wood surface constraint (60mm working surface)
-- Workspace limit enforcement (robot reach boundaries)
-- Intermediate path collision checking
-
-Clean, minimal implementation focusing on the 3 essential environmental constraints.
+- Workspace limit enforcement
 
 Author: Robot Control Team
 """
 
 import numpy as np
 import logging
-from typing import List, Tuple, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
 import yaml
@@ -27,7 +24,6 @@ class CollisionType(Enum):
     """Types of collision detection."""
     NONE = "none"
     SELF_COLLISION = "self_collision"
-    ENVIRONMENT_COLLISION = "environment_collision" 
     FLOOR_COLLISION = "floor_collision"
     WORKSPACE_VIOLATION = "workspace_violation"
     JOINT_LIMIT_VIOLATION = "joint_limit_violation"
@@ -204,12 +200,7 @@ class EnhancedCollisionChecker:
         
         return CollisionResult(False, CollisionType.NONE, "Self-collision OK")
     
-    def check_environment_collision(self, joint_positions: List[np.ndarray], tcp_position: np.ndarray) -> CollisionResult:
-        """Check collision with wood surface (already handled in floor_collision check)."""
-        # Environment collision is now handled directly in floor_collision check
-        # This method kept for interface compatibility but no additional checks needed
-        return CollisionResult(False, CollisionType.NONE, "Environment collision OK")
-    
+
     def check_path_collision(self, joint_path: List[np.ndarray], fk_function) -> CollisionResult:
         """Check collision along the entire joint path with intermediate points."""
         resolution = self.config.get('validation', {}).get('path_resolution', 0.01)  # 1cm resolution
@@ -266,11 +257,6 @@ class EnhancedCollisionChecker:
         if result.is_collision:
             return result
         
-        # 5. Check environment collision
-        result = self.check_environment_collision(joint_positions, tcp_position)
-        if result.is_collision:
-            return result
-        
         return CollisionResult(False, CollisionType.NONE, "Configuration collision-free")
     
     def _get_joint_positions(self, joint_angles: np.ndarray, fk_function) -> List[np.ndarray]:
@@ -296,11 +282,12 @@ class EnhancedCollisionChecker:
         return joint_positions
     
     def get_collision_summary(self) -> Dict[str, Any]:
-        """Get summary of collision checker configuration."""
+        """Get summary of clean collision checker configuration."""
         return {
+            'robot_model': 'RB3-730ES-U',
             'critical_joint_pairs': len(self.critical_joint_pairs),
             'safety_margins_enabled': self.safety_margins.get('enabled', False),
             'workspace_bounds': self.workspace,
             'path_resolution': self.config.get('validation', {}).get('path_resolution', 0.01),
-            'constraints': ['floor_constraint', 'wood_surface_constraint', 'workspace_limits', 'self_collision']
+            'essential_constraints': ['floor_constraint', 'wood_surface_constraint', 'workspace_limits', 'self_collision']
         }

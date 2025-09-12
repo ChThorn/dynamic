@@ -25,9 +25,13 @@ from dataclasses import dataclass
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'kinematics', 'src'))
 
-from forward_kinematic import ForwardKinematics
-from inverse_kinematic import InverseKinematics
-from motion_planner import MotionPlanner, PlanningStatus
+try:
+    from forward_kinematic import ForwardKinematics
+    from inverse_kinematic import InverseKinematics
+    from motion_planner import MotionPlanner, PlanningStatus, PlanningStrategy
+except ImportError as e:
+    print(f"Import error: {e}")
+    sys.exit(1)
 
 @dataclass
 class RobotPose:
@@ -186,12 +190,30 @@ class CleanRobotMotionPlanner:
             current_pose = self.get_current_pose_from_joints(current_joints_deg)
             T_current = current_pose.to_transformation_matrix()
             
-            # Plan motion using internal motion planner
-            result = self.motion_planner.plan_cartesian_motion(T_current, T_target)
+            # Convert target pose to joint configuration using IK
+            q_target, ik_success = self.ik.solve(T_target)
+            if not ik_success:
+                return RobotMotionPlan(
+                    waypoints=[], 
+                    execution_time_sec=0.0,
+                    planning_time_ms=0.0,
+                    success=False, 
+                    error_message="IK failed for target pose"
+                )
+            
+            # Get current joint configuration
+            q_current = np.deg2rad(current_joints_deg)
+            
+            # Plan motion using joint space planning
+            result = self.motion_planner.plan_motion(
+                q_current, q_target,
+                strategy=PlanningStrategy.JOINT_SPACE,
+                waypoint_count=5
+            )
             
             start_time_ms = result.planning_time * 1000
             
-            if result.status != PlanningStatus.SUCCESS:
+            if result.status.value != 'success':
                 return RobotMotionPlan(
                     waypoints=[], 
                     execution_time_sec=0.0,
@@ -219,7 +241,7 @@ class CleanRobotMotionPlanner:
             
             return RobotMotionPlan(
                 waypoints=waypoints,
-                execution_time_sec=result.plan.total_time if result.plan else 0.0,
+                execution_time_sec=getattr(result.plan, 'total_time', 0.0) if result.plan else 0.0,
                 planning_time_ms=start_time_ms,
                 success=True
             )
