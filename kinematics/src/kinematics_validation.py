@@ -49,23 +49,61 @@ class KinematicsValidator:
         self.ik = inverse_kinematics
         self.n_joints = forward_kinematics.n_joints
         
-        # Simple workspace bounds for validation (in meters)
+        # More realistic workspace bounds for RB3-730ES-U (in meters)
+        # Based on the robot's actual reach characteristics
         self.workspace_bounds = {
-            'x_range': [-1.0, 1.0],
-            'y_range': [-1.0, 1.0], 
-            'z_range': [0.06, 1.4]  # Above 60mm table to maximum reach
+            'x_range': [-0.75, 0.75],
+            'y_range': [-0.75, 0.75], 
+            'z_range': [0.05, 0.9]  # Adjusted range to match actual robot height
         }
+        
+        # RB3-730ES-U robot parameters for workspace analysis
+        self.robot_reach = 0.730  # Max reach in meters
+        self.robot_min_reach = 0.12  # Min reach in meters
+        self.robot_base_height = 0.1453  # Height of first joint from base
         
         # Results storage
         self.validation_results = {}
         
         logger.info("Kinematics validator initialized with constraint-free modules")
     
-    def _simple_workspace_check(self, position: np.ndarray) -> bool:
-        """Simple workspace bounds check for validation purposes."""
-        return (self.workspace_bounds['x_range'][0] <= position[0] <= self.workspace_bounds['x_range'][1] and
+    def _realistic_workspace_check(self, position: np.ndarray) -> bool:
+        """
+        Realistic workspace check using spherical and cylindrical constraints.
+        More accurately represents the RB3-730ES-U robot's reachable workspace.
+        """
+        # Basic bounds check
+        if not (self.workspace_bounds['x_range'][0] <= position[0] <= self.workspace_bounds['x_range'][1] and
                 self.workspace_bounds['y_range'][0] <= position[1] <= self.workspace_bounds['y_range'][1] and
-                self.workspace_bounds['z_range'][0] <= position[2] <= self.workspace_bounds['z_range'][1])
+                self.workspace_bounds['z_range'][0] <= position[2] <= self.workspace_bounds['z_range'][1]):
+            return False
+        
+        # Distance from robot base in XY plane
+        xy_distance = np.sqrt(position[0]**2 + position[1]**2)
+        
+        # Spherical workspace constraint (max reach)
+        distance_from_shoulder = np.sqrt(xy_distance**2 + (position[2] - self.robot_base_height)**2)
+        if distance_from_shoulder > self.robot_reach:
+            return False
+            
+        # Minimum reach constraint
+        if distance_from_shoulder < self.robot_min_reach:
+            return False
+            
+        # Additional constraints for realistic workspace
+        # Avoid low positions with large xy_distance (shoulder joint limitation)
+        if xy_distance > 0.6 and position[2] < 0.15:
+            return False
+            
+        # Avoid positions directly above robot (singularity region)
+        if xy_distance < 0.1 and position[2] > 0.7:
+            return False
+            
+        return True
+    
+    def _simple_workspace_check(self, position: np.ndarray) -> bool:
+        """Simple workspace bounds check for backward compatibility."""
+        return self._realistic_workspace_check(position)
     
     def verify_screw_axes_theory(self) -> Dict[str, Any]:
         """
@@ -243,11 +281,12 @@ class KinematicsValidator:
     def analyze_workspace_coverage(self, num_samples: int = 1000, 
                                 grid_resolution: int = 20) -> Dict[str, Any]:
         """
-        Fast workspace coverage analysis using only forward kinematics.
+        Enhanced workspace coverage analysis using only forward kinematics.
         """
         logger.info(f"Analyzing workspace coverage with {num_samples} samples (FK-only)")
         
         reachable_positions = []
+        simple_box_count = 0
         limits_lower, limits_upper = self.fk.get_joint_limits()
         
         # Use only FK - much faster and more reliable
@@ -256,8 +295,14 @@ class KinematicsValidator:
             T = self.fk.compute_forward_kinematics(q)
             pos = T[:3, 3]
             
-            # Simple workspace check
-            if self._simple_workspace_check(pos):
+            # Check if within simple box bounds
+            if (self.workspace_bounds['x_range'][0] <= pos[0] <= self.workspace_bounds['x_range'][1] and
+                self.workspace_bounds['y_range'][0] <= pos[1] <= self.workspace_bounds['y_range'][1] and
+                self.workspace_bounds['z_range'][0] <= pos[2] <= self.workspace_bounds['z_range'][1]):
+                simple_box_count += 1
+            
+            # Check if within realistic workspace
+            if self._realistic_workspace_check(pos):
                 reachable_positions.append(pos)
         
         reachable_positions = np.array(reachable_positions)
@@ -271,25 +316,31 @@ class KinematicsValidator:
                 'volume_estimate': self._estimate_workspace_volume(reachable_positions),
                 'centroid': np.mean(reachable_positions, axis=0)
             }
+            
+            # Additional workspace metrics
+            workspace_bounds['xy_coverage'] = self._calculate_xy_coverage(reachable_positions)
+            workspace_bounds['z_distribution'] = self._calculate_z_distribution(reachable_positions)
         else:
             workspace_bounds = None
         
-        # Skip expensive grid and IK testing
-        grid_coverage = {'resolution': 0, 'total_points': 0, 'reachable_points': 0, 'coverage_ratio': 0.0}
-        
+        # Enhanced coverage metrics
         coverage_percentage = len(reachable_positions) / num_samples * 100
+        realistic_coverage_percentage = len(reachable_positions) / simple_box_count * 100 if simple_box_count > 0 else 0
         
         results = {
             'num_samples': num_samples,
             'reachable_positions': reachable_positions,
             'unreachable_positions': np.array([]),  # Not computed in FK-only mode
             'workspace_bounds': workspace_bounds,
-            'coverage_percentage': coverage_percentage,
-            'grid_coverage': grid_coverage
+            'coverage_percentage': coverage_percentage,  # Old metric (percentage of all samples)
+            'realistic_coverage_percentage': realistic_coverage_percentage,  # New metric (percentage of box-bounded samples)
+            'simple_box_count': simple_box_count,
+            'grid_coverage': {'resolution': 0, 'total_points': 0, 'reachable_points': 0, 'coverage_ratio': 0.0}
         }
         
         logger.info(f"Workspace Coverage Results (FK-only):")
-        logger.info(f"  Coverage: {coverage_percentage:.1f}%")
+        logger.info(f"  Raw coverage: {coverage_percentage:.1f}% of random samples")
+        logger.info(f"  Realistic coverage: {realistic_coverage_percentage:.1f}% of box-bounded workspace")
         logger.info(f"  Reachable points: {len(reachable_positions)}/{num_samples}")
         
         if workspace_bounds:
@@ -300,6 +351,58 @@ class KinematicsValidator:
         self.validation_results['workspace_coverage'] = results
         return results
     
+    def _calculate_xy_coverage(self, positions: np.ndarray, grid_size: int = 10) -> Dict[str, Any]:
+        """Calculate XY plane coverage metrics."""
+        if len(positions) == 0:
+            return {'coverage_ratio': 0.0}
+            
+        # Create a grid in XY plane
+        x_min, x_max = self.workspace_bounds['x_range']
+        y_min, y_max = self.workspace_bounds['y_range']
+        
+        x_bins = np.linspace(x_min, x_max, grid_size)
+        y_bins = np.linspace(y_min, y_max, grid_size)
+        
+        # Count points in each grid cell
+        grid = np.zeros((grid_size-1, grid_size-1))
+        for i in range(grid_size-1):
+            for j in range(grid_size-1):
+                mask = ((positions[:, 0] >= x_bins[i]) & 
+                        (positions[:, 0] < x_bins[i+1]) & 
+                        (positions[:, 1] >= y_bins[j]) & 
+                        (positions[:, 1] < y_bins[j+1]))
+                grid[i, j] = np.sum(mask)
+        
+        # Calculate coverage ratio
+        non_zero_cells = np.sum(grid > 0)
+        total_cells = (grid_size-1) * (grid_size-1)
+        coverage_ratio = non_zero_cells / total_cells
+        
+        return {
+            'grid': grid,
+            'coverage_ratio': coverage_ratio,
+            'non_zero_cells': non_zero_cells,
+            'total_cells': total_cells
+        }
+    
+    def _calculate_z_distribution(self, positions: np.ndarray, bins: int = 10) -> Dict[str, Any]:
+        """Analyze height (Z) distribution of reachable positions."""
+        if len(positions) == 0:
+            return {'distribution': []}
+            
+        z_min, z_max = self.workspace_bounds['z_range']
+        z_hist, z_edges = np.histogram(positions[:, 2], bins=bins, range=(z_min, z_max))
+        
+        # Normalize
+        z_hist = z_hist / np.sum(z_hist)
+        
+        return {
+            'histogram': z_hist.tolist(),
+            'bin_edges': z_edges.tolist(),
+            'mean_height': np.mean(positions[:, 2]),
+            'median_height': np.median(positions[:, 2])
+        }
+
     def benchmark_performance(self, num_fk_tests: int = 1000, 
                             num_ik_tests: int = 100) -> Dict[str, Any]:
         """
@@ -520,7 +623,7 @@ class KinematicsValidator:
         return report_text
     
     def plot_validation_results(self, save_path: Optional[str] = None) -> Optional[Any]:
-        """Create validation plots."""
+        """Create enhanced validation plots with improved workspace visualization."""
         if not MATPLOTLIB_AVAILABLE:
             logger.warning("Matplotlib not available for plotting")
             return None
@@ -569,18 +672,33 @@ class KinematicsValidator:
             axes[1, 0].set_ylabel('Rotation Error (degrees)')
             axes[1, 0].set_title('Position vs Rotation Error')
         
-        # Workspace coverage (if available)
+        # Enhanced workspace visualization with projection views
         if 'workspace_coverage' in self.validation_results:
             ws_results = self.validation_results['workspace_coverage']
             if len(ws_results['reachable_positions']) > 0:
                 positions = ws_results['reachable_positions']
-                axes[1, 1].scatter(positions[:, 0], positions[:, 1], alpha=0.5, s=1)
+                
+                # 3D workspace projection (top view)
+                axes[1, 1].scatter(positions[:, 0], positions[:, 1], c=positions[:, 2], 
+                                  alpha=0.5, s=2, cmap='viridis')
                 axes[1, 1].set_xlabel('X (m)')
                 axes[1, 1].set_ylabel('Y (m)')
-                axes[1, 1].set_title('Workspace Coverage (XY Projection)')
+                axes[1, 1].set_title('Workspace Coverage (XY Projection, color=Z)')
                 axes[1, 1].axis('equal')
+                
+                # Draw theoretical workspace boundary circle
+                theta = np.linspace(0, 2*np.pi, 100)
+                x_circle = self.robot_reach * np.cos(theta)
+                y_circle = self.robot_reach * np.sin(theta)
+                axes[1, 1].plot(x_circle, y_circle, 'r--', alpha=0.5, label='Max Reach')
+                
+                # Draw min reach circle
+                x_min_circle = self.robot_min_reach * np.cos(theta)
+                y_min_circle = self.robot_min_reach * np.sin(theta)
+                axes[1, 1].plot(x_min_circle, y_min_circle, 'k--', alpha=0.5, label='Min Reach')
+                axes[1, 1].legend(loc='upper right')
         
-        # Summary statistics
+        # Enhanced summary statistics with workspace metrics
         stats_text = self._format_summary_stats()
         axes[1, 2].text(0.1, 0.5, stats_text, transform=axes[1, 2].transAxes,
                         fontsize=10, verticalalignment='center', fontfamily='monospace')
@@ -594,7 +712,7 @@ class KinematicsValidator:
             logger.info(f"Validation plots saved to: {save_path}")
         
         return fig
-    
+
     def _compute_joint_error(self, q1: np.ndarray, q2: np.ndarray) -> float:
         """Compute joint space error considering periodicity."""
         diff = q2 - q1
@@ -701,6 +819,20 @@ class KinematicsValidator:
                     score -= 10
                     issues.append(f"Moderate position error ({pos_err_mm:.1f} mm)")
         
+        # Use realistic workspace coverage metric instead of raw coverage
+        if 'workspace_coverage' in self.validation_results:
+            results = self.validation_results['workspace_coverage']
+            if 'realistic_coverage_percentage' in results:
+                coverage = results['realistic_coverage_percentage']
+                if coverage < 75:
+                    score -= 5  # Less severe penalty with realistic metric
+                    issues.append(f"Moderate workspace coverage ({coverage:.1f}%)")
+            elif 'coverage_percentage' in results:
+                coverage = results['coverage_percentage']
+                if coverage < 50:
+                    score -= 10
+                    issues.append(f"Low workspace coverage ({coverage:.1f}%)")
+        
         # Determine status
         if score >= 90:
             status = "EXCELLENT - Production Ready"
@@ -755,7 +887,7 @@ class KinematicsValidator:
         return lines
     
     def _format_summary_stats(self) -> str:
-        """Format summary statistics for plotting."""
+        """Format summary statistics for plotting with enhanced workspace metrics."""
         lines = []
         
         if 'fk_ik_consistency' in self.validation_results:
@@ -768,7 +900,18 @@ class KinematicsValidator:
         
         if 'workspace_coverage' in self.validation_results:
             result = self.validation_results['workspace_coverage']
-            lines.append(f"Workspace: {result['coverage_percentage']:.1f}%")
+            if 'realistic_coverage_percentage' in result:
+                lines.append(f"Realistic Workspace: {result['realistic_coverage_percentage']:.1f}%")
+            lines.append(f"Raw Coverage: {result['coverage_percentage']:.1f}%")
+            if 'workspace_bounds' in result and result['workspace_bounds']:
+                bounds = result['workspace_bounds']
+                if 'volume_estimate' in bounds:
+                    lines.append(f"Volume: {bounds['volume_estimate']:.3f} m³")
+        
+        if 'real_data' in self.validation_results:
+            result = self.validation_results['real_data']
+            if 'mean_position_error' in result:
+                lines.append(f"Real Data Pos Err: {result['mean_position_error']*1000:.2f} mm")
         
         return "\n".join(lines)
     

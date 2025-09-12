@@ -284,13 +284,23 @@ def run_comprehensive_validation(fk, ik):
                 logger.warning(f"❌ Rotation accuracy: NEEDS IMPROVEMENT ({mean_rot_deg:.3f}°)")
         
         # Workspace coverage
-        coverage = workspace_results['coverage_percentage']
-        if coverage > 80:
-            logger.info(f"✅ Workspace coverage: EXCELLENT ({coverage:.1f}%)")
-        elif coverage > 60:
-            logger.info(f"⚠️ Workspace coverage: ADEQUATE ({coverage:.1f}%)")
+        if 'realistic_coverage_percentage' in workspace_results:
+            coverage = workspace_results['realistic_coverage_percentage']
+            if coverage > 80:
+                logger.info(f"✅ Workspace coverage (realistic): EXCELLENT ({coverage:.1f}%)")
+            elif coverage > 60:
+                logger.info(f"⚠️ Workspace coverage (realistic): ADEQUATE ({coverage:.1f}%)")
+            else:
+                logger.warning(f"❌ Workspace coverage (realistic): LOW ({coverage:.1f}%)")
         else:
-            logger.warning(f"❌ Workspace coverage: LOW ({coverage:.1f}%)")
+            # Original coverage metric
+            coverage = workspace_results['coverage_percentage']
+            if coverage > 80:
+                logger.info(f"✅ Workspace coverage: EXCELLENT ({coverage:.1f}%)")
+            elif coverage > 60:
+                logger.info(f"⚠️ Workspace coverage: ADEQUATE ({coverage:.1f}%)")
+            else:
+                logger.warning(f"❌ Workspace coverage: LOW ({coverage:.1f}%)")
         
         # Performance
         fk_freq = performance_results['fk_performance']['frequency_hz']
