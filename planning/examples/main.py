@@ -163,7 +163,7 @@ def test_trajectory_planning(path_planner, sample_path):
         if result.success:
             trajectory = result.trajectory
             print(f"  Trajectory points: {len(trajectory.points)}")
-            print(f"  Total time: {trajectory.total_time:.2f} s")
+            print(f"  Planning time: {trajectory.total_duration:.2f} s" if hasattr(trajectory, 'total_duration') else "  Planning time: N/A")
             print(f"  Max velocities: {np.max(np.degrees(trajectory.max_velocities)):.1f} deg/s (max)")
             print(f"  Max accelerations: {np.max(np.degrees(trajectory.max_accelerations)):.1f} deg/s² (max)")
             print(f"  Smoothness metric: {trajectory.smoothness_metric:.4f}")
@@ -211,7 +211,7 @@ def test_motion_planning(fk, ik):
         if result.status == PlanningStatus.SUCCESS:
             plan = result.plan
             print(f"   Waypoints: {plan.num_waypoints}")
-            print(f"   Total trajectory time: {plan.total_time:.2f} s")
+            print(f"   Total trajectory time: {plan.planning_time:.2f} s")
             print(f"   Strategy used: {plan.strategy_used.value}")
         
         # Test 2: Cartesian space motion
@@ -247,7 +247,7 @@ def test_motion_planning(fk, ik):
         if result.status == PlanningStatus.SUCCESS:
             plan = result.plan
             print(f"   Waypoints processed: {plan.num_waypoints}")
-            print(f"   Total execution time: {plan.total_time:.2f} s")
+            print(f"   Total execution time: {plan.planning_time:.2f} s")
         
         # Display statistics
         stats = motion_planner.get_statistics()
@@ -332,7 +332,7 @@ def test_integrated_planning_pipeline():
                 successful_motions += 1
                 plan = result.plan
                 print(f"    Waypoints: {plan.num_waypoints}")
-                print(f"    Trajectory time: {plan.total_time:.2f} s")
+                print(f"    Trajectory time: {plan.planning_time:.2f} s")
                 print(f"    Strategy: {plan.strategy_used.value}")
             else:
                 print(f"    Error: {result.error_message}")

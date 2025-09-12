@@ -1,43 +1,17 @@
 #!/usr/bin/env python3
 """
-Motion Planning Coordinator Module
+Motion Planning Module - Clean Production Version
 
-This module provides the high-level motion planning interface that coordinates
-between path planning, trajectory planning, and constraint checking to provid            # Solve IK for start and goal poses with constraint validation
-            q_start, start_valid = self.solve_constrained_ik(start_pose)
-            if not start_valid:
-                return MotionPlanningResult(
-                    status=PlanningStatus.IK_CONSTRAINT_VIOLATION,
-                    error_message="Failed to find constraint-satisfying IK solution for start pose",
-                    planning_time=time.time() - start_time
-                )
-            
-            q_goal, goal_valid = self.solve_constrained_ik(goal_pose)
-            if not goal_valid:
-                return MotionPlanningResult(
-                    status=PlanningStatus.IK_CONSTRAINT_VIOLATION,
-                    error_message="Failed to find constraint-satisfying IK solution for goal pose",
-                    planning_time=time.time() - start_time
-                )ion planning solution for robot applications.
+Minimal motion planning with C-space integration for better IK performance.
+Cleaned up from research code to essential functionality only.
 
-Key Features:
-- High-level motion planning interface
-- Integration of path and trajectory planning
-- Execution monitoring and safety validation
-- Multiple planning strategies (joint space, Cartesian space)
-- Fallback planning and recovery behaviors
-- Real-time execution monitoring
-
-The MotionPlanner serves as the main entry point for robot motion planning,
-orchestrating all lower-level planning modules while ensuring safety and
-performance requirements are met.
-
-Author: Robot Control Team
+Author: Robot Control Team  
 """
 
 import numpy as np
 import logging
-from typing import List, Tuple, Dict, Any, Optional, Union, Callable
+import pickle
+from typing import List, Tuple, Dict, Any, Optional, Union
 from dataclasses import dataclass
 from enum import Enum
 import time
@@ -45,11 +19,23 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Import enhanced collision checker
+# Import collision checker
 try:
     from .collision_checker import EnhancedCollisionChecker, CollisionResult, CollisionType
 except ImportError:
     from collision_checker import EnhancedCollisionChecker, CollisionResult, CollisionType
+
+# Fix: Use relative import for configuration_space_analyzer if it's in the same package
+try:
+    from .configuration_space_analyzer import ConfigurationSpaceAnalyzer
+except ImportError:
+    # Fallback import for when running standalone
+    try:
+        from configuration_space_analyzer import ConfigurationSpaceAnalyzer
+    except ImportError:
+        # Module might not be available - will be initialized on-demand
+        ConfigurationSpaceAnalyzer = None
+        logger.debug("ConfigurationSpaceAnalyzer not available")
 
 class PlanningStrategy(Enum):
     """Available motion planning strategies."""
@@ -70,23 +56,20 @@ class PlanningStatus(Enum):
 
 @dataclass
 class MotionPlan:
-    """Complete motion plan with path and trajectory."""
+    """Container for a planned motion trajectory."""
     joint_waypoints: List[np.ndarray]
-    trajectory: Optional[Any] = None  # Trajectory from trajectory_planner
     cartesian_waypoints: Optional[List[np.ndarray]] = None
-    planning_time: float = 0.0
+    velocity_profile: Optional[np.ndarray] = None
+    acceleration_profile: Optional[np.ndarray] = None
     strategy_used: Optional[PlanningStrategy] = None
+    planning_time: float = 0.0
+    trajectory: Optional[Any] = None  # Can store trajectory object
     validation_results: Optional[Dict[str, Any]] = None
     
     @property
     def num_waypoints(self) -> int:
-        """Number of joint waypoints in the plan."""
+        """Get number of waypoints in the plan."""
         return len(self.joint_waypoints) if self.joint_waypoints else 0
-    
-    @property
-    def total_time(self) -> float:
-        """Total execution time of the trajectory."""
-        return self.trajectory.total_time if self.trajectory else 0.0
 
 @dataclass
 class MotionPlanningResult:
@@ -99,10 +82,11 @@ class MotionPlanningResult:
     fallback_used: bool = False
 
 class MotionPlanner:
-    """Clean, minimal motion planning coordinator using AORRTC."""
+    """Advanced motion planner with strategy selection and fallback mechanisms."""
     
     def __init__(self, kinematics_fk, kinematics_ik, 
-                 path_planner=None, trajectory_planner=None):
+                 path_planner=None, trajectory_planner=None,
+                 config_path=None):
         """
         Initialize clean motion planner with AORRTC system.
         
@@ -147,7 +131,10 @@ class MotionPlanner:
             'default_waypoint_count': 10,
             'ik_max_attempts': 5,
             'ik_position_tolerance': 0.002,  # 2mm - more realistic tolerance
-            'ik_rotation_tolerance': 2.0     # 2 degrees - more realistic tolerance
+            'ik_rotation_tolerance': 2.0,     # 2 degrees - more realistic tolerance
+            'enable_fallbacks': True,
+            'max_attempts': 3,
+            'fallback_strategies': [PlanningStrategy.CARTESIAN_SPACE, PlanningStrategy.HYBRID]
         }
         
         # Simple statistics
@@ -157,7 +144,54 @@ class MotionPlanner:
             'failed_plans': 0
         }
         
+        # Add Configuration Space Analyzer  
+        self.config_analyzer = None
+        self.cspace_analysis_enabled = False
+    
         logger.info("Clean motion planner initialized: AORRTC + smart fallback")
+    
+    def enable_configuration_space_analysis(self, build_maps=False):
+        """Enable C-space analysis for better IK performance."""
+        logger.info("Enabling configuration space analysis")
+        try:
+            from configuration_space_analyzer import ConfigurationSpaceAnalyzer
+            self.config_analyzer = ConfigurationSpaceAnalyzer(self.fk, self.ik)
+            self.cspace_analysis_enabled = True
+            
+            # Load or build reachability map
+            cache_path = os.path.join(os.path.dirname(__file__), '../cache/production_reachability_map.pkl')
+            if os.path.exists(cache_path) and not build_maps:
+                try:
+                    with open(cache_path, 'rb') as f:
+                        self.config_analyzer.reachability_map = pickle.load(f)
+                    logger.info("Loaded cached reachability map")
+                except Exception as e:
+                    logger.warning(f"Failed to load cache: {e}")
+                    build_maps = True
+            
+            if build_maps:
+                logger.info("Building reachability maps...")
+                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                self.config_analyzer.build_reachability_map(
+                    workspace_samples=500, c_space_samples=2000, save_path=cache_path)
+                logger.info("Reachability maps built and cached")
+        except ImportError:
+            logger.warning("Configuration space analyzer not available")
+    
+    def solve_ik_with_cspace(self, target_pose: np.ndarray, q_current: Optional[np.ndarray] = None) -> Tuple[Optional[np.ndarray], bool]:
+        """Solve IK with C-space optimization if available."""
+        if self.cspace_analysis_enabled and self.config_analyzer:
+            # Get optimal seed from C-space analysis
+            target_position = target_pose[:3, 3]
+            q_seed = self.config_analyzer.get_best_ik_region(target_position)
+            if q_seed is not None:
+                q_solution, converged = self.ik.solve(target_pose, q_init=q_seed)
+                if converged:
+                    return q_solution, True
+        
+        # Fallback to standard IK
+        q_init = q_current if q_current is not None else np.zeros(6)
+        return self.ik.solve(target_pose, q_init=q_init)
     
     def plan_motion(self, start_config: np.ndarray, goal_config: np.ndarray,
                    strategy: Optional[PlanningStrategy] = None,
@@ -222,6 +256,8 @@ class MotionPlanner:
             
         except Exception as e:
             logger.error(f"Motion planning failed with exception: {e}")
+            import traceback
+            traceback.print_exc()
             return MotionPlanningResult(
                 status=PlanningStatus.FAILED,
                 error_message=f"Planning exception: {str(e)}",

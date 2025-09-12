@@ -24,17 +24,35 @@ Version: 1.0.0
 __version__ = "1.0.0"
 __author__ = "Robot Control Team"
 
-# Core planning classes
+"""
+Planning module initialization.
+
+Imports are structured to avoid circular dependencies.
+"""
+
+# First, import base modules that don't have dependencies
+from .collision_checker import EnhancedCollisionChecker, CollisionResult, CollisionType
+from .configuration_space_analyzer import ConfigurationSpaceAnalyzer
+
+# Then import modules that depend on the base modules
 from .path_planner import PathPlanner, ConstraintsChecker
 from .trajectory_planner import TrajectoryPlanner
-from .motion_planner import MotionPlanner
+
+# Finally, import the high-level coordinator that depends on everything else
+from .motion_planner import MotionPlanner, PlanningStrategy, PlanningStatus
 
 # Export all public classes
 __all__ = [
     'PathPlanner',
     'ConstraintsChecker', 
     'TrajectoryPlanner',
-    'MotionPlanner'
+    'MotionPlanner',
+    'EnhancedCollisionChecker',
+    'CollisionResult',
+    'CollisionType',
+    'ConfigurationSpaceAnalyzer',
+    'PlanningStrategy',
+    'PlanningStatus'
 ]
 
 # Package metadata

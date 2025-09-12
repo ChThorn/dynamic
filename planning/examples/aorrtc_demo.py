@@ -112,7 +112,6 @@ def run_aorrtc_demo():
         if enhanced_result.status.value == 'success':
             print(f"   ✅ Success: {enhanced_result.plan.num_waypoints} waypoints")
             print(f"   ⏱️  Planning time: {enhanced_result.planning_time:.3f}s")
-            print(f"   🎭 Trajectory time: {enhanced_result.plan.total_time:.2f}s")
             if enhanced_result.plan.trajectory:
                 print(f"   📊 Trajectory points: {len(enhanced_result.plan.trajectory.points)}")
         else:
