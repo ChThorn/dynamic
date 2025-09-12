@@ -140,6 +140,8 @@ class PickAndPlaceExecutor:
     
     def execute_pick_and_place(self,
                               current_joints_deg: List[float],
+                              current_tcp_position_mm: List[float],
+                              current_tcp_orientation_deg: List[float],
                               pick_position_mm: List[float],
                               pick_orientation_deg: List[float],
                               place_position_mm: List[float],
@@ -150,10 +152,12 @@ class PickAndPlaceExecutor:
         
         Args:
             current_joints_deg: Current robot joint angles in degrees
-            pick_position_mm: Pick position [x, y, z] in mm
-            pick_orientation_deg: Pick orientation [rx, ry, rz] in degrees  
-            place_position_mm: Place position [x, y, z] in mm
-            place_orientation_deg: Place orientation [rx, ry, rz] in degrees
+            current_tcp_position_mm: Current TCP position [x, y, z] in mm
+            current_tcp_orientation_deg: Current TCP orientation [rx, ry, rz] in degrees
+            pick_position_mm: Pick target position [x, y, z] in mm
+            pick_orientation_deg: Pick target orientation [rx, ry, rz] in degrees  
+            place_position_mm: Place target position [x, y, z] in mm
+            place_orientation_deg: Place target orientation [rx, ry, rz] in degrees
             return_home: Whether to return to home position after place
             
         Returns:
@@ -167,17 +171,22 @@ class PickAndPlaceExecutor:
         print("=" * 30)
         
         # Validate inputs
-        valid_pick, msg_pick = self.validate_position(pick_position_mm, "Pick position")
+        valid_current, msg_current = self.validate_position(current_tcp_position_mm, "Current TCP position")
+        if not valid_current:
+            return PickPlaceResult(PickPlaceStatus.INVALID_INPUT, False, 0.0, [], msg_current)
+        
+        valid_pick, msg_pick = self.validate_position(pick_position_mm, "Pick target position")
         if not valid_pick:
             return PickPlaceResult(PickPlaceStatus.INVALID_INPUT, False, 0.0, [], msg_pick)
         
-        valid_place, msg_place = self.validate_position(place_position_mm, "Place position") 
+        valid_place, msg_place = self.validate_position(place_position_mm, "Place target position") 
         if not valid_place:
             return PickPlaceResult(PickPlaceStatus.INVALID_INPUT, False, 0.0, [], msg_place)
         
         print(f"✅ Input validation passed")
-        print(f"Pick: {pick_position_mm} mm, {pick_orientation_deg}°")  
-        print(f"Place: {place_position_mm} mm, {place_orientation_deg}°")
+        print(f"Current TCP: {current_tcp_position_mm} mm, {current_tcp_orientation_deg}°")
+        print(f"Pick target: {pick_position_mm} mm, {pick_orientation_deg}°")  
+        print(f"Place target: {place_position_mm} mm, {place_orientation_deg}°")
         
         current_joints = current_joints_deg.copy()
         
@@ -287,13 +296,9 @@ class PickAndPlaceExecutor:
             # Step 7: Return home (optional)
             if return_home:
                 print(f"\n🏠 STEP 7: Return to home position")
-                home_joints = current_joints_deg  # Original position
-                
-                # Convert home joints to pose for motion planning
-                home_pose = self.planner.get_current_pose_from_joints(home_joints)
-                
+                # Return to original TCP position and orientation
                 success, plan = self.plan_motion_with_retry(
-                    current_joints, home_pose.position_mm, home_pose.orientation_deg, "Return home"
+                    current_joints, current_tcp_position_mm, current_tcp_orientation_deg, "Return home"
                 )
                 
                 if not success:
@@ -345,26 +350,34 @@ def demo_pick_and_place():
     executor = PickAndPlaceExecutor(config)
     print("✅ Pick and place executor initialized")
     
-    # Define operation
+    # Define starting point (known joints and TCP pose)
     current_joints = [0.0, -20.0, 30.0, 0.0, -10.0, 0.0]  # degrees
     
-    # Pick location (above table)
+    # Get current TCP pose from joints (for validation and home return)
+    current_tcp_pose = executor.planner.get_current_pose_from_joints(current_joints)
+    current_tcp_pos = current_tcp_pose.position_mm
+    current_tcp_rot = current_tcp_pose.orientation_deg
+    
+    # Define target poses (only position and orientation in mm/degrees)
+    # Pick target (above table)
     pick_pos = [250.0, 150.0, 80.0]        # mm (20mm above 60mm table)
     pick_rot = [180.0, 0.0, 0.0]           # gripper pointing down
     
-    # Place location 
+    # Place target 
     place_pos = [-200.0, 200.0, 100.0]     # mm (different location)
     place_rot = [180.0, 0.0, 45.0]         # gripper down, rotated 45°
     
     print(f"\n📋 Operation Details:")
     print(f"Current joints: {current_joints} degrees")
-    print(f"Pick location: {pick_pos} mm, {pick_rot}°")
-    print(f"Place location: {place_pos} mm, {place_rot}°")
+    print(f"Current TCP: {[round(x,1) for x in current_tcp_pos]} mm, {[round(x,1) for x in current_tcp_rot]}°")
+    print(f"Pick target: {pick_pos} mm, {pick_rot}°")
+    print(f"Place target: {place_pos} mm, {place_rot}°")
     print(f"Config: {config.approach_height_mm}mm approach, {config.retreat_height_mm}mm retreat")
     
-    # Execute pick and place
+    # Execute pick and place with current TCP pose and target poses
     result = executor.execute_pick_and_place(
-        current_joints, pick_pos, pick_rot, place_pos, place_rot, return_home=True
+        current_joints, current_tcp_pos, current_tcp_rot,
+        pick_pos, pick_rot, place_pos, place_rot, return_home=True
     )
     
     # Show results

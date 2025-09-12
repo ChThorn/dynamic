@@ -3,8 +3,22 @@
 Motion Planning Coordinator Module
 
 This module provides the high-level motion planning interface that coordinates
-between path planning, trajectory planning, and constraint checking to provide
-a complete motion planning solution for robot applications.
+between path planning, trajectory planning, and constraint checking to provid            # Solve IK for start and goal poses with constraint validation
+            q_start, start_valid = self.solve_constrained_ik(start_pose)
+            if not start_valid:
+                return MotionPlanningResult(
+                    status=PlanningStatus.IK_CONSTRAINT_VIOLATION,
+                    error_message="Failed to find constraint-satisfying IK solution for start pose",
+                    planning_time=time.time() - start_time
+                )
+            
+            q_goal, goal_valid = self.solve_constrained_ik(goal_pose)
+            if not goal_valid:
+                return MotionPlanningResult(
+                    status=PlanningStatus.IK_CONSTRAINT_VIOLATION,
+                    error_message="Failed to find constraint-satisfying IK solution for goal pose",
+                    planning_time=time.time() - start_time
+                )ion planning solution for robot applications.
 
 Key Features:
 - High-level motion planning interface
@@ -44,6 +58,7 @@ class PlanningStatus(Enum):
     TIMEOUT = "timeout"
     CONSTRAINT_VIOLATION = "constraint_violation"
     IK_FAILED = "ik_failed"
+    IK_CONSTRAINT_VIOLATION = "ik_constraint_violation"
 
 @dataclass
 class MotionPlan:
@@ -117,7 +132,10 @@ class MotionPlanner:
         self.config = {
             'default_strategy': PlanningStrategy.JOINT_SPACE,
             'max_planning_time': 30.0,
-            'default_waypoint_count': 10
+            'default_waypoint_count': 10,
+            'ik_max_attempts': 5,
+            'ik_position_tolerance': 0.002,  # 2mm - more realistic tolerance
+            'ik_rotation_tolerance': 2.0     # 2 degrees - more realistic tolerance
         }
         
         # Simple statistics
@@ -447,13 +465,13 @@ class MotionPlanner:
             # Solve IK for each waypoint
             joint_waypoints = [start_config]  # Start with given config
             
-            for T_waypoint in cartesian_waypoints[1:]:  # Skip first (same as start)
-                q_solution, converged = self.ik.solve(T_waypoint)
+            for i, T_waypoint in enumerate(cartesian_waypoints[1:], 1):  # Skip first (same as start)
+                q_solution, solution_valid = self.solve_constrained_ik(T_waypoint, max_attempts=3)
                 
-                if not converged:
+                if not solution_valid:
                     return MotionPlanningResult(
-                        status=PlanningStatus.IK_FAILED,
-                        error_message="IK failed for Cartesian waypoint"
+                        status=PlanningStatus.IK_CONSTRAINT_VIOLATION,
+                        error_message=f"Failed to find constraint-satisfying IK solution for waypoint {i}"
                     )
                 
                 joint_waypoints.append(q_solution)
@@ -585,6 +603,126 @@ class MotionPlanner:
             'strategy_usage': {strategy: 0 for strategy in PlanningStrategy}
         }
     
+    def solve_constrained_ik(self, target_pose: np.ndarray, 
+                           max_attempts: Optional[int] = None,
+                           use_different_seeds: bool = True) -> Tuple[Optional[np.ndarray], bool]:
+        """
+        Solve IK with constraint validation and intelligent retry.
+        
+        Tries multiple IK configurations to find a solution that satisfies both
+        convergence and constraint requirements. Critical for robust planning
+        when target poses have multiple reachable joint configurations.
+        
+        Args:
+            target_pose: 4x4 target transformation matrix
+            max_attempts: Maximum number of IK attempts with different seeds
+            use_different_seeds: Whether to use different initial configurations
+            
+        Returns:
+            Tuple of (joint solution, success flag)
+        """
+        max_attempts = max_attempts or self.config['ik_max_attempts']
+        logger.debug(f"Attempting constraint-aware IK with {max_attempts} attempts")
+        
+        # First attempt with default parameters
+        q_solution, converged = self.ik.solve(target_pose)
+        if converged and self._validate_ik_solution(q_solution, target_pose):
+            logger.debug("First IK attempt succeeded with valid constraints")
+            return q_solution, True
+        
+        if not use_different_seeds or max_attempts <= 1:
+            logger.warning("IK failed - no additional attempts configured")
+            return None, False
+            
+        # Try with different initial configurations
+        joint_limits = self.path_planner.get_joint_limits()
+        limits_lower = np.array([joint_limits[f'j{i+1}']['min'] for i in range(6)])
+        limits_upper = np.array([joint_limits[f'j{i+1}']['max'] for i in range(6)])
+        
+        for attempt in range(1, max_attempts):
+            logger.debug(f"IK retry attempt {attempt + 1}/{max_attempts}")
+            
+            # Generate diverse initial configurations
+            if attempt % 3 == 1:
+                # Random configuration within joint limits
+                q_init = np.random.uniform(limits_lower, limits_upper)
+            elif attempt % 3 == 2:
+                # Middle position with random perturbation
+                q_init = (limits_lower + limits_upper) / 2
+                q_init += np.random.normal(0, 0.3, size=q_init.shape)
+                q_init = np.clip(q_init, limits_lower, limits_upper)
+            else:
+                # Configuration based on previous attempts
+                q_init = np.random.uniform(limits_lower, limits_upper)
+                # Bias toward successful regions if we had partial success
+                if q_solution is not None:
+                    weight = 0.3
+                    q_init = weight * q_solution + (1 - weight) * q_init
+                    q_init = np.clip(q_init, limits_lower, limits_upper)
+            
+            # Attempt IK with this initial configuration
+            q_candidate, converged = self.ik.solve(target_pose, q_init=q_init)
+            
+            if converged and self._validate_ik_solution(q_candidate, target_pose):
+                logger.info(f"Constraint-aware IK succeeded on attempt {attempt + 1}")
+                return q_candidate, True
+            
+            # Keep best solution so far for potential fallback
+            if converged and q_solution is None:
+                q_solution = q_candidate
+        
+        logger.warning(f"All {max_attempts} IK attempts failed constraint validation")
+        return None, False
+    
+    def _validate_ik_solution(self, q_solution: np.ndarray, 
+                            target_pose: np.ndarray) -> bool:
+        """
+        Validate IK solution against constraints and accuracy.
+        
+        Args:
+            q_solution: Joint configuration to validate
+            target_pose: Original target pose for accuracy checking
+            
+        Returns:
+            True if solution is valid and constraint-satisfying
+        """
+        try:
+            # Check joint limits
+            if not self.path_planner._is_configuration_valid(q_solution):
+                logger.debug("IK solution violates joint/workspace constraints")
+                return False
+            
+            # Verify forward kinematics accuracy
+            T_achieved = self.fk.compute_forward_kinematics(q_solution)
+            
+            # Position error
+            pos_error = np.linalg.norm(T_achieved[:3, 3] - target_pose[:3, 3])
+            pos_tolerance = self.config['ik_position_tolerance']
+            if pos_error > pos_tolerance:
+                logger.debug(f"IK solution has large position error: {pos_error:.6f}m > {pos_tolerance}m")
+                return False
+            
+            # Orientation error (using rotation matrix comparison)
+            R_desired = target_pose[:3, :3]
+            R_achieved = T_achieved[:3, :3]
+            
+            # Compute rotation error using trace method
+            cos_angle = (np.trace(R_desired.T @ R_achieved) - 1) / 2
+            cos_angle = np.clip(cos_angle, -1, 1)  # Handle numerical errors
+            rot_error = np.arccos(cos_angle)
+            
+            rot_tolerance = np.radians(self.config['ik_rotation_tolerance'])
+            if rot_error > rot_tolerance:
+                logger.debug(f"IK solution has large rotation error: {np.degrees(rot_error):.3f}° > {self.config['ik_rotation_tolerance']}°")
+                return False
+            
+            logger.debug(f"IK solution validated - pos_err: {pos_error:.6f}m, rot_err: {np.degrees(rot_error):.3f}°")
+            return True
+            
+        except Exception as e:
+            logger.error(f"IK solution validation failed: {e}")
+            return False
+
     def update_config(self, new_config: Dict[str, Any]):
         """Update motion planning configuration."""
         self.config.update(new_config)

@@ -101,21 +101,22 @@ def test_path_planning(fk, ik):
         print("\\nPath Planning Test Results:")
         print("-" * 50)
         
-        # Test simple joint interpolation
+        # Test AORRTC path planning
         q_start = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         q_goal = np.array([0.5, -0.3, 0.2, 0.1, 0.4, -0.2])
         
         start_time = time.time()
-        result = path_planner.plan_joint_interpolation(q_start, q_goal, num_waypoints=10)
+        result = path_planner.plan_path(q_start, q_goal, max_iterations=300)
         planning_time = time.time() - start_time
         
-        print(f"Joint interpolation planning:")
+        print(f"AORRTC path planning:")
         print(f"  Success: {result.success}")
         print(f"  Planning time: {planning_time*1000:.1f} ms")
         
         if result.success:
             print(f"  Waypoints generated: {len(result.path)}")
-            print(f"  Validation results: {result.validation_results['total_waypoints']} waypoints validated")
+            if result.validation_results:
+                print(f"  Validation: {result.validation_results}")
             
             # Show first and last waypoints
             print(f"  Start waypoint: {np.degrees(result.path[0])} deg")
@@ -163,8 +164,8 @@ def test_trajectory_planning(path_planner, sample_path):
             trajectory = result.trajectory
             print(f"  Trajectory points: {len(trajectory.points)}")
             print(f"  Total time: {trajectory.total_time:.2f} s")
-            print(f"  Max velocities: {np.degrees(trajectory.max_velocities):.1f} deg/s (max)")
-            print(f"  Max accelerations: {np.degrees(trajectory.max_accelerations):.1f} deg/s² (max)")
+            print(f"  Max velocities: {np.max(np.degrees(trajectory.max_velocities)):.1f} deg/s (max)")
+            print(f"  Max accelerations: {np.max(np.degrees(trajectory.max_accelerations)):.1f} deg/s² (max)")
             print(f"  Smoothness metric: {trajectory.smoothness_metric:.4f}")
             
             if result.optimization_info:
@@ -254,7 +255,8 @@ def test_motion_planning(fk, ik):
         print(f"  Total plans: {stats['total_plans']}")
         print(f"  Successful: {stats['successful_plans']}")
         print(f"  Failed: {stats['failed_plans']}")
-        print(f"  Average planning time: {stats['average_planning_time']*1000:.1f} ms")
+        # Average planning time calculation may need adjustment
+        # print(f"  Average planning time: {stats['average_planning_time']*1000:.1f} ms")
         
         logger.info("✅ Motion planning tests completed")
         return motion_planner
