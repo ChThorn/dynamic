@@ -150,6 +150,14 @@ def test_workspace_exploration(fk, ik):
         print(f"\nTesting {num_tests} random configurations:")
         print("-" * 50)
         
+        # Use faster parameters for workspace exploration 
+        fast_params = {
+            'pos_tol': 1e-3,           # 1mm tolerance 
+            'rot_tol': 2e-3,           # Relaxed rotation tolerance
+            'max_iters': 100,          # Fewer iterations for speed
+            'num_attempts': 15,        # Fewer attempts for speed
+        }
+        
         successful_tests = 0
         position_errors = []
         rotation_errors = []
@@ -168,9 +176,9 @@ def test_workspace_exploration(fk, ik):
             # if not constraints_checker.check_workspace(pos):
             #     continue
             
-            # Solve IK
+            # Solve IK with fast parameters
             start_time = time.time()
-            q_solution, converged = ik.solve(T_target)
+            q_solution, converged = ik.solve(T_target, **fast_params)
             solve_time = time.time() - start_time
             solve_times.append(solve_time)
             

@@ -49,18 +49,18 @@ class InverseKinematics:
         self.joint_limits = forward_kinematics.joint_limits
         self.n_joints = forward_kinematics.n_joints
         
-        # Default IK parameters
+        # Default IK parameters - Balanced precision and reliability
         self.default_params = default_params or {
-            'pos_tol': 2e-3,           # 2mm position tolerance
-            'rot_tol': 5e-3,           # ~0.3° rotation tolerance
-            'max_iters': 300,          # Maximum iterations per attempt
-            'damping': 5e-4,           # Initial damping factor
-            'step_scale': 0.5,         # Step scaling factor
-            'dq_max': 0.3,             # Maximum joint step size
-            'num_attempts': 100,       # Number of random restart attempts
-            'combined_tolerance': 3e-3, # Combined error tolerance
-            'position_relaxation': 0.01, # Position relaxation for perturbation (1cm)
-            'rotation_relaxation': 0.05  # Rotation relaxation for perturbation (~2.8°)
+            'pos_tol': 5e-4,           # 0.5mm position tolerance (good precision)
+            'rot_tol': 1e-3,           # ~0.06° rotation tolerance  
+            'max_iters': 500,          # More iterations for precision
+            'damping': 2e-4,           # Lower damping for better convergence
+            'step_scale': 0.4,         # Moderate steps for balance
+            'dq_max': 0.25,            # Moderate maximum joint step size
+            'num_attempts': 75,        # Good number of attempts
+            'combined_tolerance': 8e-4, # Balanced combined error tolerance
+            'position_relaxation': 0.008, # 8mm position relaxation for perturbation
+            'rotation_relaxation': 0.03   # ~1.7° rotation relaxation for perturbation
         }
         
         # Performance tracking
@@ -73,19 +73,22 @@ class InverseKinematics:
         
         logger.info("Constraint-free inverse kinematics solver initialized")
     
-    def solve(self, T_des: np.ndarray, q_init: Optional[np.ndarray] = None,
-              **kwargs) -> Tuple[Optional[np.ndarray], bool]:
+    def solve(self, T_target, q_init=None, use_tool_frame=False, **kwargs):
         """
-        Solve inverse kinematics for desired end-effector pose.
+        Solve the inverse kinematics for a given target pose.
         
         Args:
-            T_des: Desired 4x4 homogeneous transformation matrix
-            q_init: Initial joint configuration (optional)
-            **kwargs: Override default IK parameters
-            
+            T_target: Target transformation matrix (4x4)
+            q_init: Initial guess for joint angles (optional)
+            use_tool_frame: If True and tool is attached, T_target is the desired tool pose.
+                           If False, T_target is the desired TCP pose.
+            **kwargs: Additional parameters to override defaults
+        
         Returns:
-            Tuple of (solution joint angles, convergence flag)
+            q_solution: Solution joint angles (None if no solution found)
+            success: Boolean indicating if a solution was found
         """
+        # Start timing
         start_time = time.time()
         self.stats['total_calls'] += 1
         
@@ -93,44 +96,22 @@ class InverseKinematics:
         params = self.default_params.copy()
         params.update(kwargs)
         
-        try:
-            # Validate inputs
-            if T_des.shape != (4, 4):
-                raise InverseKinematicsError("T_des must be a 4x4 transformation matrix")
+        if use_tool_frame and self.fk.tool:
+            # Convert tool target to TCP target
+            T_tcp_target = self.fk.tool.transform_tool_to_tcp(T_target)
+        else:
+            T_tcp_target = T_target
             
-            if q_init is not None and (q_init.shape != (self.n_joints,)):
-                raise InverseKinematicsError(f"q_init must have shape ({self.n_joints},)")
+        # Solve for the TCP target using the main IK solver
+        q_solution, success = self._solve_with_multiple_attempts(T_tcp_target, q_init, params)
+        
+        # Update statistics
+        solve_time = time.time() - start_time
+        self.stats['total_time'] += solve_time
+        if success:
+            self.stats['successful_calls'] += 1
             
-            # Check if target is home position
-            q_home, is_home = self._check_home_position(T_des, params)
-            if is_home:
-                self.stats['successful_calls'] += 1
-                self.stats['total_time'] += time.time() - start_time
-                return q_home, True
-            
-            # Main IK solving
-            q_solution, converged = self._solve_with_multiple_attempts(T_des, q_init, params)
-            
-            # Fallback with pose perturbation if main method failed
-            if not converged and q_solution is not None:
-                logger.info("Main IK failed, attempting perturbation fallback")
-                q_perturbed, perturb_converged = self._solve_with_perturbation(T_des, q_solution, params)
-                if perturb_converged:
-                    q_solution, converged = q_perturbed, True
-                    logger.info("Perturbation fallback succeeded")
-            
-            # Update statistics
-            if converged:
-                self.stats['successful_calls'] += 1
-            
-            self.stats['total_time'] += time.time() - start_time
-            
-            return q_solution, converged
-            
-        except Exception as e:
-            logger.error(f"Inverse kinematics failed: {e}")
-            self.stats['total_time'] += time.time() - start_time
-            return None, False
+        return q_solution, success
     
     def _check_home_position(self, T_des: np.ndarray, params: Dict[str, Any]) -> Tuple[np.ndarray, bool]:
         """Check if desired pose is the home position."""
@@ -195,28 +176,46 @@ class InverseKinematics:
         if q_init is not None:
             configs.append(q_init.copy())
         
-        # Add common configurations
-        configs.extend([
+        # Add strategic seed configurations that work well for this robot
+        seed_configs = [
             np.zeros(self.n_joints),                    # Home position
             (limits_lower + limits_upper) / 2,          # Middle position
-        ])
+            np.array([0.0, -0.2, 0.5, 0.0, 0.3, 0.0]), # Common reaching config
+            np.array([0.3, -0.3, 0.6, 0.0, 0.0, 0.0]), # Extended config  
+            np.array([-0.3, -0.3, 0.6, 0.0, 0.0, 0.0]), # Mirror config
+            np.array([0.0, 0.0, 0.0, 0.0, -0.5, 0.0]), # Wrist config
+            np.array([0.1, -0.1, 0.2, 0.0, 0.1, -0.1]), # Known good config
+        ]
+        
+        # Only add seed configs that respect joint limits
+        for seed in seed_configs:
+            if np.all(seed >= limits_lower) and np.all(seed <= limits_upper):
+                configs.append(seed)
         
         # Generate random configurations with different strategies
-        remaining_attempts = num_attempts - len(configs)
+        remaining_attempts = max(0, num_attempts - len(configs))
         for i in range(remaining_attempts):
-            if i % 3 == 0:
+            if i % 4 == 0:
                 # Uniform random
                 q_rand = np.random.uniform(limits_lower, limits_upper, size=(self.n_joints,))
-            elif i % 3 == 1:
+            elif i % 4 == 1:
                 # Gaussian around middle
                 mid = (limits_lower + limits_upper) / 2
-                std = (limits_upper - limits_lower) / 6
+                std = (limits_upper - limits_lower) / 8  # Tighter distribution
                 q_rand = np.random.normal(mid, std, size=(self.n_joints,))
                 q_rand = np.clip(q_rand, limits_lower, limits_upper)
+            elif i % 4 == 2:
+                # Small perturbations around known good configs
+                base_idx = i % len(configs) if configs else 0
+                base = configs[base_idx] if configs else np.zeros(self.n_joints)
+                q_rand = base + np.random.normal(0, 0.15, self.n_joints)
+                q_rand = np.clip(q_rand, limits_lower, limits_upper)
             else:
-                # Perturbation around existing good config
-                base = q_init if q_init is not None else np.zeros(self.n_joints)
-                q_rand = base + np.random.normal(0, 0.2, self.n_joints)
+                # Systematic grid sampling
+                q_rand = np.zeros(self.n_joints)
+                for j in range(self.n_joints):
+                    grid_vals = np.linspace(limits_lower[j], limits_upper[j], 3)
+                    q_rand[j] = np.random.choice(grid_vals)
                 q_rand = np.clip(q_rand, limits_lower, limits_upper)
             
             configs.append(q_rand)
@@ -523,3 +522,17 @@ class InverseKinematics:
         """Update default IK parameters."""
         self.default_params.update(params)
         logger.info(f"Updated IK parameters: {params}")
+    
+    def solve_tcp_pose(self, T_tcp: np.ndarray, q_init: Optional[np.ndarray] = None,
+                       **kwargs) -> Tuple[Optional[np.ndarray], bool]:
+        """
+        Solve inverse kinematics for desired TCP pose (ignore tool if attached).
+        """
+        return self.solve(T_tcp, q_init, use_tool_frame=False, **kwargs)
+    
+    def solve_tool_pose(self, T_tool: np.ndarray, q_init: Optional[np.ndarray] = None,
+                        **kwargs) -> Tuple[Optional[np.ndarray], bool]:
+        """
+        Solve inverse kinematics for desired tool functional point pose.
+        """
+        return self.solve(T_tool, q_init, use_tool_frame=True, **kwargs)

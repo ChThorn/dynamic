@@ -91,6 +91,71 @@ planning:
     max_velocity_threshold: 1.0 # rad/s
     max_jerk_threshold: 10.0 # rad/s^3
 
+# Tool/Gripper Configuration
+tools:
+  # Default gripper configuration (2-finger parallel gripper)
+  default_gripper:
+    name: "Parallel 2-Finger Gripper"
+    type: "parallel_gripper"
+    enabled: true
+    
+    # Tool transformation from TCP to gripper functional point
+    # TCP to gripper center point transformation
+    tcp_to_tool_offset:
+      # Translation from TCP to gripper center (meters)
+      translation: [0.0, 0.0, 0.085]  # 85mm extension in Z (TCP forward)
+      # Rotation from TCP frame to gripper frame (RPY in degrees)
+      rotation: [0.0, 0.0, 0.0]       # No rotation (gripper aligned with TCP)
+    
+    # Gripper geometry (for collision checking and workspace analysis)
+    geometry:
+      # Gripper body dimensions (length x width x height in meters)
+      body_size: [0.06, 0.04, 0.02]   # 60x40x20mm gripper body
+      # Finger dimensions when closed
+      finger_length: 0.03             # 30mm finger length
+      finger_width: 0.008             # 8mm finger width
+      finger_thickness: 0.005         # 5mm finger thickness
+      # Maximum gripper opening
+      max_opening: 0.05               # 50mm max opening
+      
+    # Gripper operation parameters
+    operation:
+      # Force and speed limits
+      max_force: 40.0                 # Maximum gripping force (N)
+      max_speed: 0.1                  # Maximum closing speed (m/s)
+      # Grasp detection
+      force_threshold: 5.0            # Force threshold for grasp detection (N)
+      position_tolerance: 0.001       # Position tolerance for grasp (m)
+      
+    # Workspace modifications when gripper is attached
+    workspace_impact:
+      # Additional safety margins due to gripper geometry
+      margin_increase: [0.03, 0.02, 0.02]  # Increase X,Y,Z margins by 30,20,20mm
+      # Restricted zones (relative to TCP frame)
+      restricted_orientations:
+        # Avoid extreme wrist orientations that could cause gripper collisions
+        min_wrist_2_angle: -150        # degrees (J5)
+        max_wrist_2_angle: 150         # degrees (J5)
+
+  # Template for custom grippers
+  custom_gripper_template:
+    name: "Custom Gripper Template"
+    type: "custom"
+    enabled: false
+    tcp_to_tool_offset:
+      translation: [0.0, 0.0, 0.0]    # Define your tool offset
+      rotation: [0.0, 0.0, 0.0]       # Define orientation offset
+    geometry:
+      # Define your gripper geometry
+      body_size: [0.0, 0.0, 0.0]
+      # Add any custom geometry parameters
+    # Add any custom parameters for your specific gripper
+
+# Tool selection (which tool is currently attached)
+active_tool:
+  current: "default_gripper"          # Name of currently attached tool
+  auto_detect: false                  # Whether to auto-detect tool presence
+
 # Description and notes
 description: |
   Consolidated robot configuration file for RB3-730ES-U robot.
@@ -112,3 +177,9 @@ description: |
 
   Safety margins create a smaller "safe zone" within the physical boundaries
   to account for robot dynamics, sensor noise, and mechanical tolerances.
+
+  TOOL COORDINATE SYSTEMS:
+  - TCP (Tool Center Point): The robot's native end-effector reference point
+  - Tool Functional Point: The actual working point of the attached tool
+  - For grippers: Usually the center point between fingers when closed
+  - Tool offset transforms TCP coordinates to functional coordinates
