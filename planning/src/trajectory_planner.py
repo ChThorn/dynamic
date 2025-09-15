@@ -86,13 +86,13 @@ class TrajectoryPlanner:
         
         # Default configuration
         self.config = {
-            # Velocity limits (rad/s)
-            'max_joint_velocity': np.radians(90),  # 90 deg/s per joint
-            'max_joint_acceleration': np.radians(180),  # 180 deg/s^2 per joint
+            # Velocity limits (rad/s) - Conservative limits for smooth operation
+            'max_joint_velocity': np.radians(45),  # 45 deg/s per joint (reduced from 90)
+            'max_joint_acceleration': np.radians(90),  # 90 deg/s^2 per joint (reduced from 180)
             
             # Smoothing parameters
-            'smoothing_iterations': 3,
-            'smoothing_weight': 0.1,
+            'smoothing_iterations': 5,  # Increased smoothing for better motion quality
+            'smoothing_weight': 0.15,  # Slightly more aggressive smoothing
             
             # Trajectory resolution
             'time_resolution': 0.01,  # 10ms time steps
@@ -286,12 +286,12 @@ class TrajectoryPlanner:
         
         return smoothed_path
     
-    def _apply_gradient_based_smoothing(self, path: np.ndarray, iterations: int = 50) -> np.ndarray:
+    def _apply_gradient_based_smoothing(self, path: np.ndarray, iterations: int = 30) -> np.ndarray:
         """Apply gradient-based optimization smoothing similar to AORRTC."""
         smoothed_path = path.copy()
-        alpha = 0.1  # Learning rate
-        beta = 0.6   # Smoothness weight
-        gamma = 0.2  # Constraint adherence weight
+        alpha = 0.05  # Reduced learning rate for stability
+        beta = 0.7    # Higher smoothness weight
+        gamma = 0.15  # Reduced constraint adherence weight
         
         for iteration in range(iterations):
             for i in range(1, len(smoothed_path) - 1):

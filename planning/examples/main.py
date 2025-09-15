@@ -6,10 +6,28 @@ This example demonstrates the complete motion planning system including:
 1. Path planning with constraint checking
 2. Trajectory planning with optimization
 3. High-level motion coordination
-4. Integration with kinematics modules
+4. Integr        # Display statistics
+        stats = motion_planner.get_statistics()
+        print(f"\nMotion Planner Statistics:")
+        print(f"  Total plans: {stats['total_plans']}")
+        print(f"  Successful: {stats['successful_plans']}")
+        print(f"  Failed: {stats['failed_plans']}")th kinematics modules
 5. Real-world units interface (mm, degrees)
 
-The demonstration shows various planning scenarios:
+The demo        # Final statistics
+        final_stats = motion_planner.get_statistics()
+        print(f"\nFinal System Statistics:")
+        print(f"  Total planning calls: {final_stats['total_plans']}")
+        if final_stats['total_plans'] > 0:
+            print(f"  Overall success rate: {final_stats['successful_plans']/final_stats['total_plans']*100:.1f}%")
+            # Calculate average planning time from our recorded times
+            avg_planning_time = total_planning_time / final_stats['total_plans'] if final_stats['total_plans'] > 0 else 0
+            print(f"  Average planning time: {avg_planning_time*1000:.1f} ms")
+        else:
+            print(f"  No planning attempts recorded")
+        
+        # Strategy usage info not available in basic stats
+        print(f"  Strategy usage: Data not available in current implementation")ows various planning scenarios:
 - Simple joint space motion
 - Cartesian space motion with IK solving
 - Multi-waypoint path planning
@@ -349,14 +367,16 @@ def test_integrated_planning_pipeline():
         final_stats = motion_planner.get_statistics()
         print(f"\\nFinal System Statistics:")
         print(f"  Total planning calls: {final_stats['total_plans']}")
-        print(f"  Overall success rate: {final_stats['successful_plans']/final_stats['total_plans']*100:.1f}%")
-        print(f"  Average planning time: {final_stats['average_planning_time']*1000:.1f} ms")
+        if final_stats['total_plans'] > 0:
+            print(f"  Overall success rate: {final_stats['successful_plans']/final_stats['total_plans']*100:.1f}%")
+            # Calculate average planning time from our recorded times
+            avg_planning_time = total_planning_time / final_stats['total_plans'] if final_stats['total_plans'] > 0 else 0
+            print(f"  Average planning time: {avg_planning_time*1000:.1f} ms")
+        else:
+            print(f"  No planning attempts recorded")
         
-        strategy_usage = final_stats['strategy_usage']
-        print(f"  Strategy usage:")
-        for strategy, count in strategy_usage.items():
-            if count > 0:
-                print(f"    {strategy.value}: {count} times")
+        # Strategy usage info not available in basic stats
+        print(f"  Strategy usage: Data not available in current implementation")
         
         logger.info("✅ Integrated planning pipeline test completed")
         

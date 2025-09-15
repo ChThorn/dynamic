@@ -291,7 +291,7 @@ def demo():
     print("✅ System initialized")
     
     # Current robot state
-    current_joints = [0.0, -30.0, 45.0, 0.0, -15.0, 0.0]  # degrees
+    current_joints = [10.0, -30.0, 0.0, 0.0, 0.0, 0.0]  # degrees
     target_pos = [300.0, 200.0, 400.0]  # mm
     target_rot = [0.0, 0.0, 90.0]       # degrees
     

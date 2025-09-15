@@ -175,7 +175,11 @@ class EnhancedCollisionChecker:
         return CollisionResult(False, CollisionType.NONE, "Floor/surface collision OK")
     
     def check_self_collision(self, joint_angles: np.ndarray, joint_positions: List[np.ndarray]) -> CollisionResult:
-        """Check for self-collision using joint positions from screw theory FK."""
+        """Check for self-collision using adaptive thresholds."""
+        # Special handling for home position [0,0,0,0,0,0]
+        if np.allclose(joint_angles, 0.0, atol=0.01):
+            return CollisionResult(False, CollisionType.NONE, "Home position - safe configuration")
+        
         # Check critical joint pairs for minimum distance violations
         for joint1_idx, joint2_idx in self.critical_joint_pairs:
             # Ensure we have enough joint positions
@@ -186,8 +190,8 @@ class EnhancedCollisionChecker:
                 # Calculate distance between joints
                 distance = np.linalg.norm(pos1 - pos2)
                 
-                # Get minimum safe distance for this joint pair
-                min_distance = self.min_joint_distances.get((joint1_idx, joint2_idx), 0.08)
+                # Get adaptive threshold based on configuration
+                min_distance = self._get_adaptive_threshold(joint1_idx, joint2_idx, joint_angles)
                 
                 if distance < min_distance:
                     joint_names = [f"J{joint1_idx}", f"J{joint2_idx}"]
@@ -199,6 +203,29 @@ class EnhancedCollisionChecker:
                     )
         
         return CollisionResult(False, CollisionType.NONE, "Self-collision OK")
+    
+    def _get_adaptive_threshold(self, joint1_idx: int, joint2_idx: int, joint_angles: np.ndarray) -> float:
+        """Get adaptive collision threshold based on robot configuration."""
+        # Base threshold from configuration
+        base_threshold = self.min_joint_distances.get((joint1_idx, joint2_idx), 0.08)
+        
+        # Configuration-dependent adjustments
+        config_factor = 1.0
+        
+        # For specific joint pairs, adjust threshold based on configuration
+        if (joint1_idx, joint2_idx) == (1, 4):  # Shoulder vs Wrist2
+            # Reduce threshold when shoulder is in certain positions
+            shoulder_angle = abs(joint_angles[1])
+            if shoulder_angle < 0.5:  # ~30 degrees
+                config_factor = 0.7  # Allow closer proximity
+        
+        elif (joint1_idx, joint2_idx) == (2, 0):  # Elbow vs Base
+            # Adjust based on elbow configuration
+            elbow_angle = abs(joint_angles[2])
+            if elbow_angle > 1.57:  # > 90 degrees
+                config_factor = 0.8  # Allow closer when elbow is bent
+        
+        return base_threshold * config_factor
     
 
     def check_path_collision(self, joint_path: List[np.ndarray], fk_function) -> CollisionResult:

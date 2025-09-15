@@ -350,21 +350,21 @@ def demo_pick_and_place():
     executor = PickAndPlaceExecutor(config)
     print("✅ Pick and place executor initialized")
     
-    # Define starting point (known joints and TCP pose)
-    current_joints = [0.0, -20.0, 30.0, 0.0, -10.0, 0.0]  # degrees
+    # Define starting point (very safe joints configuration - extended pose)
+    current_joints = [0.0, -60.0, 90.0, 0.0, 30.0, 0.0]  # degrees - more extended config
     
     # Get current TCP pose from joints (for validation and home return)
     current_tcp_pose = executor.planner.get_current_pose_from_joints(current_joints)
     current_tcp_pos = current_tcp_pose.position_mm
     current_tcp_rot = current_tcp_pose.orientation_deg
     
-    # Define target poses (only position and orientation in mm/degrees)
-    # Pick target (above table)
-    pick_pos = [250.0, 150.0, 80.0]        # mm (20mm above 60mm table)
+    # Define target poses (within robot workspace - approximately 650mm reach)
+    # Pick target (within reachable workspace)
+    pick_pos = [400.0, 200.0, 300.0]       # mm (reduced reach, higher Z)
     pick_rot = [180.0, 0.0, 0.0]           # gripper pointing down
     
-    # Place target 
-    place_pos = [-200.0, 200.0, 100.0]     # mm (different location)
+    # Place target (different reachable location)
+    place_pos = [200.0, 400.0, 350.0]      # mm (shorter reach, higher Z)
     place_rot = [180.0, 0.0, 45.0]         # gripper down, rotated 45°
     
     print(f"\n📋 Operation Details:")

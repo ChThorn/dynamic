@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Motion Planning Module - Clean Production Version
+Motion Planning Module - Production Optimized
 
-Minimal motion planning with C-space integration for better IK performance.
-Cleaned up from research code to essential functionality only.
+Clean motion planning with optional C-space integration for better IK performance.
+Optimized for production use with essential functionality only.
 
 Author: Robot Control Team  
 """
@@ -11,11 +11,11 @@ Author: Robot Control Team
 import numpy as np
 import logging
 import pickle
-from typing import List, Tuple, Dict, Any, Optional, Union
-from dataclasses import dataclass
-from enum import Enum
 import time
 import os
+from typing import List, Tuple, Dict, Any, Optional
+from dataclasses import dataclass
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +25,13 @@ try:
 except ImportError:
     from collision_checker import EnhancedCollisionChecker, CollisionResult, CollisionType
 
-# Fix: Use relative import for configuration_space_analyzer if it's in the same package
+# Import configuration space analyzer
 try:
     from .configuration_space_analyzer import ConfigurationSpaceAnalyzer
 except ImportError:
-    # Fallback import for when running standalone
     try:
         from configuration_space_analyzer import ConfigurationSpaceAnalyzer
     except ImportError:
-        # Module might not be available - will be initialized on-demand
         ConfigurationSpaceAnalyzer = None
         logger.debug("ConfigurationSpaceAnalyzer not available")
 
@@ -63,7 +61,7 @@ class MotionPlan:
     acceleration_profile: Optional[np.ndarray] = None
     strategy_used: Optional[PlanningStrategy] = None
     planning_time: float = 0.0
-    trajectory: Optional[Any] = None  # Can store trajectory object
+    trajectory: Optional[Any] = None
     validation_results: Optional[Dict[str, Any]] = None
     
     @property
@@ -82,13 +80,12 @@ class MotionPlanningResult:
     fallback_used: bool = False
 
 class MotionPlanner:
-    """Advanced motion planner with strategy selection and fallback mechanisms."""
+    """Production motion planner with strategy selection and optional C-space optimization."""
     
     def __init__(self, kinematics_fk, kinematics_ik, 
-                 path_planner=None, trajectory_planner=None,
-                 config_path=None):
+                 path_planner=None, trajectory_planner=None):
         """
-        Initialize clean motion planner with AORRTC system.
+        Initialize motion planner.
         
         Args:
             kinematics_fk: ForwardKinematics instance
@@ -99,7 +96,7 @@ class MotionPlanner:
         self.fk = kinematics_fk
         self.ik = kinematics_ik
         
-        # Initialize clean planners
+        # Initialize planners
         if path_planner is None:
             try:
                 from .path_planner import PathPlanner
@@ -120,63 +117,64 @@ class MotionPlanner:
         else:
             self.trajectory_planner = trajectory_planner
             
-        # Initialize enhanced collision checker
+        # Initialize collision checker
         config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'constraints.yaml')
         self.collision_checker = EnhancedCollisionChecker(config_path)
         
-        # Minimal configuration for AORRTC system
+        # Configuration
         self.config = {
             'default_strategy': PlanningStrategy.JOINT_SPACE,
             'max_planning_time': 30.0,
             'default_waypoint_count': 10,
             'ik_max_attempts': 5,
-            'ik_position_tolerance': 0.002,  # 2mm - more realistic tolerance
-            'ik_rotation_tolerance': 2.0,     # 2 degrees - more realistic tolerance
+            'ik_position_tolerance': 0.002,  # 2mm
+            'ik_rotation_tolerance': 2.0,     # 2 degrees
             'enable_fallbacks': True,
             'max_attempts': 3,
-            'fallback_strategies': [PlanningStrategy.CARTESIAN_SPACE, PlanningStrategy.HYBRID]
+            'fallback_strategies': [PlanningStrategy.CARTESIAN_SPACE, PlanningStrategy.HYBRID],
+            'progress_feedback': False  # Enable for progress updates
         }
         
-        # Simple statistics
+        # Statistics
         self.stats = {
             'total_plans': 0,
             'successful_plans': 0,
             'failed_plans': 0
         }
         
-        # Add Configuration Space Analyzer  
+        # Optional C-space analyzer
         self.config_analyzer = None
         self.cspace_analysis_enabled = False
+        
+        # Progress callback
+        self.progress_callback = None
     
-        logger.info("Clean motion planner initialized: AORRTC + smart fallback")
+        logger.info("Motion planner initialized")
     
     def enable_configuration_space_analysis(self, build_maps=False):
         """Enable C-space analysis for better IK performance."""
+        if ConfigurationSpaceAnalyzer is None:
+            logger.warning("ConfigurationSpaceAnalyzer not available")
+            return
+            
         logger.info("Enabling configuration space analysis")
-        try:
-            from configuration_space_analyzer import ConfigurationSpaceAnalyzer
-            self.config_analyzer = ConfigurationSpaceAnalyzer(self.fk, self.ik)
-            self.cspace_analysis_enabled = True
-            
-            # Load or build reachability map
-            cache_path = os.path.join(os.path.dirname(__file__), '../cache/production_reachability_map.pkl')
-            if os.path.exists(cache_path) and not build_maps:
-                try:
-                    with open(cache_path, 'rb') as f:
-                        self.config_analyzer.reachability_map = pickle.load(f)
-                    logger.info("Loaded cached reachability map")
-                except Exception as e:
-                    logger.warning(f"Failed to load cache: {e}")
-                    build_maps = True
-            
-            if build_maps:
-                logger.info("Building reachability maps...")
-                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-                self.config_analyzer.build_reachability_map(
-                    workspace_samples=500, c_space_samples=2000, save_path=cache_path)
-                logger.info("Reachability maps built and cached")
-        except ImportError:
-            logger.warning("Configuration space analyzer not available")
+        self.config_analyzer = ConfigurationSpaceAnalyzer(self.fk, self.ik)
+        self.cspace_analysis_enabled = True
+        
+        # Load or build reachability map
+        cache_path = os.path.join(os.path.dirname(__file__), '../cache/production_reachability_map.pkl')
+        if os.path.exists(cache_path) and not build_maps:
+            if self.config_analyzer.load_reachability_map(cache_path):
+                logger.info("Loaded cached reachability map")
+            else:
+                build_maps = True
+        
+        if build_maps:
+            logger.info("Building reachability maps...")
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            self.config_analyzer.build_reachability_map(
+                workspace_samples=500, c_space_samples=2000, save_path=cache_path)
+            logger.info("Reachability maps built and cached")
     
     def solve_ik_with_cspace(self, target_pose: np.ndarray, q_current: Optional[np.ndarray] = None) -> Tuple[Optional[np.ndarray], bool]:
         """Solve IK with C-space optimization if available."""
@@ -219,6 +217,9 @@ class MotionPlanner:
         
         try:
             # Validate inputs
+            if self.progress_callback and self.config['progress_feedback']:
+                self.progress_callback(10.0, "Validating configuration constraints")
+            
             validation_result = self._validate_planning_inputs(start_config, goal_config)
             if not validation_result['valid']:
                 return MotionPlanningResult(
@@ -228,6 +229,9 @@ class MotionPlanner:
                 )
             
             # Attempt planning with primary strategy
+            if self.progress_callback and self.config['progress_feedback']:
+                self.progress_callback(30.0, f"Planning motion using {strategy.value} strategy")
+            
             result = self._attempt_planning(
                 start_config, goal_config, strategy, waypoint_count, **kwargs
             )
@@ -237,27 +241,33 @@ class MotionPlanner:
                 self.config['enable_fallbacks'] and
                 result.attempts_made < self.config['max_attempts']):
                 
+                if self.progress_callback and self.config['progress_feedback']:
+                    self.progress_callback(60.0, "Trying fallback strategies")
+                
                 result = self._try_fallback_strategies(
                     start_config, goal_config, strategy, waypoint_count, 
                     result, **kwargs
                 )
             
             # Update statistics
+            if self.progress_callback and self.config['progress_feedback']:
+                self.progress_callback(90.0, "Finalizing motion plan")
+                
             planning_time = time.time() - start_time
             self._update_statistics(result, planning_time)
-            
-            # Set final planning time
             result.planning_time = planning_time
             
             if result.plan:
                 result.plan.planning_time = planning_time
             
+            if self.progress_callback and self.config['progress_feedback']:
+                status_msg = "Motion planning completed" if result.status == PlanningStatus.SUCCESS else "Motion planning failed"
+                self.progress_callback(100.0, status_msg)
+            
             return result
             
         except Exception as e:
             logger.error(f"Motion planning failed with exception: {e}")
-            import traceback
-            traceback.print_exc()
             return MotionPlanningResult(
                 status=PlanningStatus.FAILED,
                 error_message=f"Planning exception: {str(e)}",
@@ -282,8 +292,8 @@ class MotionPlanner:
         start_time = time.time()
         
         try:
-            # Convert poses to joint configurations
-            q_start, start_converged = self.ik.solve(start_pose)
+            # Convert poses to joint configurations using C-space optimization
+            q_start, start_converged = self.solve_ik_with_cspace(start_pose)
             if not start_converged:
                 return MotionPlanningResult(
                     status=PlanningStatus.IK_FAILED,
@@ -291,7 +301,7 @@ class MotionPlanner:
                     planning_time=time.time() - start_time
                 )
             
-            q_goal, goal_converged = self.ik.solve(goal_pose)
+            q_goal, goal_converged = self.solve_ik_with_cspace(goal_pose)
             if not goal_converged:
                 return MotionPlanningResult(
                     status=PlanningStatus.IK_FAILED,
@@ -367,7 +377,7 @@ class MotionPlanner:
                     planning_time=time.time() - start_time
                 )
             
-            # Generate trajectory (filter out path-specific parameters)
+            # Generate trajectory
             traj_kwargs = {k: v for k, v in kwargs.items() 
                           if k not in ['use_aorrtc', 'max_iterations', 'step_size']}
             traj_result = self.trajectory_planner.plan_trajectory(waypoints, **traj_kwargs)
@@ -399,14 +409,14 @@ class MotionPlanner:
                 planning_time=time.time() - start_time
             )
     
-    def _validate_planning_inputs(self, start_config: np.ndarray, 
-                                goal_config: np.ndarray) -> Dict[str, Any]:
+    def _validate_planning_inputs(self, start_config: np.ndarray, goal_config: np.ndarray) -> Dict[str, Any]:
         """Validate planning inputs."""
-        # Check joint configuration validity
+        # Validate start configuration
         start_validation = self._validate_joint_config(start_config)
         if not start_validation['valid']:
             return {'valid': False, 'error': f"Start config invalid: {start_validation['error']}"}
         
+        # Validate goal configuration
         goal_validation = self._validate_joint_config(goal_config)
         if not goal_validation['valid']:
             return {'valid': False, 'error': f"Goal config invalid: {goal_validation['error']}"}
@@ -414,18 +424,35 @@ class MotionPlanner:
         return {'valid': True}
     
     def _validate_joint_config(self, q: np.ndarray) -> Dict[str, Any]:
-        """Validate single joint configuration."""
+        """Validate a joint configuration."""
         try:
             # Check joint limits
-            joint_valid, joint_msg = self.path_planner.constraints_checker.check_joint_limits(q)
-            if not joint_valid:
-                return {'valid': False, 'error': joint_msg}
+            joint_limits = self.path_planner.get_joint_limits()
+            for i in range(len(q)):
+                joint_key = f'j{i+1}'
+                if joint_key in joint_limits:
+                    min_limit = joint_limits[joint_key]['min']
+                    max_limit = joint_limits[joint_key]['max']
+                    
+                    if q[i] < min_limit or q[i] > max_limit:
+                        return {
+                            'valid': False,
+                            'error': f"Joint {i+1} value {q[i]:.3f} outside limits [{min_limit:.3f}, {max_limit:.3f}]"
+                        }
             
-            # Check workspace via FK
+            # Check for collisions
             T = self.fk.compute_forward_kinematics(q)
-            pose_valid, pose_msg = self.path_planner.constraints_checker.check_pose_constraints(T)
-            if not pose_valid:
-                return {'valid': False, 'error': pose_msg}
+            tcp_position = T[:3, 3]
+            
+            collision_result = self.collision_checker.check_configuration_collision(
+                q, tcp_position, self.fk.compute_forward_kinematics
+            )
+            
+            if collision_result.is_collision:
+                return {
+                    'valid': False,
+                    'error': f"Configuration has collision: {collision_result.details}"
+                }
             
             return {'valid': True}
             
@@ -448,7 +475,6 @@ class MotionPlanner:
                     status=PlanningStatus.FAILED,
                     error_message=f"Unknown planning strategy: {strategy}"
                 )
-                
         except Exception as e:
             return MotionPlanningResult(
                 status=PlanningStatus.FAILED,
@@ -457,47 +483,48 @@ class MotionPlanner:
     
     def _plan_joint_space(self, start_config: np.ndarray, goal_config: np.ndarray,
                          waypoint_count: int, **kwargs) -> MotionPlanningResult:
-        """Plan motion in joint space using AORRTC with smart fallback."""
-        # Clean interface: AORRTC primary + smart fallback
-        use_fallback = kwargs.get('use_aorrtc', True)  # Default: use AORRTC with fallback
-        max_iterations = kwargs.get('max_iterations', 3000)
-        
-        # Use clean path planner interface
-        path_result = self.path_planner.plan_path(
-            start_config, goal_config, 
-            max_iterations=max_iterations,
-            use_fallback=use_fallback
-        )
-        
-        if not path_result.success:
-            return MotionPlanningResult(
-                status=PlanningStatus.CONSTRAINT_VIOLATION,
-                error_message=path_result.error_message
+        """Plan motion in joint space."""
+        try:
+            # Use path planner to generate waypoints
+            path_result = self.path_planner.plan_path(
+                start_config, goal_config, max_iterations=waypoint_count*50, **kwargs
             )
-        
-        # Generate trajectory (filter out path-specific parameters)
-        traj_kwargs = {k: v for k, v in kwargs.items() 
-                      if k not in ['use_aorrtc', 'max_iterations', 'step_size']}
-        traj_result = self.trajectory_planner.plan_trajectory(path_result.path, **traj_kwargs)
-        
-        if not traj_result.success:
+            
+            if not path_result.success:
+                return MotionPlanningResult(
+                    status=PlanningStatus.FAILED,
+                    error_message=path_result.error_message
+                )
+            
+            # Generate trajectory
+            traj_kwargs = {k: v for k, v in kwargs.items() 
+                          if k not in ['use_aorrtc', 'max_iterations', 'step_size']}
+            traj_result = self.trajectory_planner.plan_trajectory(path_result.path, **traj_kwargs)
+            
+            if not traj_result.success:
+                return MotionPlanningResult(
+                    status=PlanningStatus.FAILED,
+                    error_message=traj_result.error_message
+                )
+            
+            # Create plan
+            plan = MotionPlan(
+                joint_waypoints=path_result.path,
+                trajectory=traj_result.trajectory,
+                strategy_used=PlanningStrategy.JOINT_SPACE,
+                validation_results=path_result.validation_results
+            )
+            
+            return MotionPlanningResult(
+                status=PlanningStatus.SUCCESS,
+                plan=plan
+            )
+            
+        except Exception as e:
             return MotionPlanningResult(
                 status=PlanningStatus.FAILED,
-                error_message=traj_result.error_message
+                error_message=f"Joint space planning failed: {str(e)}"
             )
-        
-        # Create plan
-        plan = MotionPlan(
-            joint_waypoints=path_result.path,
-            trajectory=traj_result.trajectory,
-            strategy_used=PlanningStrategy.JOINT_SPACE,
-            validation_results=path_result.validation_results
-        )
-        
-        return MotionPlanningResult(
-            status=PlanningStatus.SUCCESS,
-            plan=plan
-        )
     
     def _plan_cartesian_space(self, start_config: np.ndarray, goal_config: np.ndarray,
                             waypoint_count: int, **kwargs) -> MotionPlanningResult:
@@ -510,10 +537,10 @@ class MotionPlanner:
             # Interpolate in Cartesian space
             cartesian_waypoints = self._interpolate_cartesian_path(T_start, T_goal, waypoint_count)
             
-            # Solve IK for each waypoint
-            joint_waypoints = [start_config]  # Start with given config
+            # Solve IK for each waypoint using C-space optimization
+            joint_waypoints = [start_config]
             
-            for i, T_waypoint in enumerate(cartesian_waypoints[1:], 1):  # Skip first (same as start)
+            for i, T_waypoint in enumerate(cartesian_waypoints[1:], 1):
                 q_solution, solution_valid = self.solve_constrained_ik(T_waypoint, max_attempts=3)
                 
                 if not solution_valid:
@@ -533,7 +560,7 @@ class MotionPlanner:
                     error_message=path_result.error_message
                 )
             
-            # Generate trajectory (filter out path-specific parameters)
+            # Generate trajectory
             traj_kwargs = {k: v for k, v in kwargs.items() 
                           if k not in ['use_aorrtc', 'max_iterations', 'step_size']}
             traj_result = self.trajectory_planner.plan_trajectory(joint_waypoints, **traj_kwargs)
@@ -588,7 +615,7 @@ class MotionPlanner:
         """Interpolate between two transformation matrices."""
         waypoints = []
         
-        # Extract positions and orientations
+        # Extract positions
         pos_start = T_start[:3, 3]
         pos_goal = T_goal[:3, 3]
         
@@ -597,7 +624,7 @@ class MotionPlanner:
             t = i / (num_waypoints - 1)
             pos_interp = (1 - t) * pos_start + t * pos_goal
             
-            # Simple orientation interpolation (could be improved with SLERP)
+            # Simple orientation interpolation
             T_interp = T_start.copy()
             T_interp[:3, 3] = pos_interp
             waypoints.append(T_interp)
@@ -611,7 +638,7 @@ class MotionPlanner:
         """Try fallback planning strategies."""
         for fallback_strategy in self.config['fallback_strategies']:
             if fallback_strategy == original_strategy:
-                continue  # Skip the strategy that already failed
+                continue
             
             logger.info(f"Trying fallback strategy: {fallback_strategy}")
             
@@ -630,36 +657,17 @@ class MotionPlanner:
         return previous_result
     
     def _update_statistics(self, result: MotionPlanningResult, planning_time: float):
-        """Update simple planning statistics."""
+        """Update planning statistics."""
         if result.status == PlanningStatus.SUCCESS:
             self.stats['successful_plans'] += 1
         else:
             self.stats['failed_plans'] += 1
-    
-    def get_statistics(self) -> Dict[str, Any]:
-        """Get motion planning statistics."""
-        return self.stats.copy()
-    
-    def reset_statistics(self):
-        """Reset planning statistics."""
-        self.stats = {
-            'total_plans': 0,
-            'successful_plans': 0,
-            'failed_plans': 0,
-            'total_planning_time': 0.0,
-            'average_planning_time': 0.0,
-            'strategy_usage': {strategy: 0 for strategy in PlanningStrategy}
-        }
     
     def solve_constrained_ik(self, target_pose: np.ndarray, 
                            max_attempts: Optional[int] = None,
                            use_different_seeds: bool = True) -> Tuple[Optional[np.ndarray], bool]:
         """
         Solve IK with constraint validation and intelligent retry.
-        
-        Tries multiple IK configurations to find a solution that satisfies both
-        convergence and constraint requirements. Critical for robust planning
-        when target poses have multiple reachable joint configurations.
         
         Args:
             target_pose: 4x4 target transformation matrix
@@ -670,16 +678,13 @@ class MotionPlanner:
             Tuple of (joint solution, success flag)
         """
         max_attempts = max_attempts or self.config['ik_max_attempts']
-        logger.debug(f"Attempting constraint-aware IK with {max_attempts} attempts")
         
-        # First attempt with default parameters
-        q_solution, converged = self.ik.solve(target_pose)
+        # First attempt with C-space optimization
+        q_solution, converged = self.solve_ik_with_cspace(target_pose)
         if converged and self._validate_ik_solution(q_solution, target_pose):
-            logger.debug("First IK attempt succeeded with valid constraints")
             return q_solution, True
         
         if not use_different_seeds or max_attempts <= 1:
-            logger.warning("IK failed - no additional attempts configured")
             return None, False
             
         # Try with different initial configurations
@@ -688,21 +693,15 @@ class MotionPlanner:
         limits_upper = np.array([joint_limits[f'j{i+1}']['max'] for i in range(6)])
         
         for attempt in range(1, max_attempts):
-            logger.debug(f"IK retry attempt {attempt + 1}/{max_attempts}")
-            
             # Generate diverse initial configurations
             if attempt % 3 == 1:
-                # Random configuration within joint limits
                 q_init = np.random.uniform(limits_lower, limits_upper)
             elif attempt % 3 == 2:
-                # Middle position with random perturbation
                 q_init = (limits_lower + limits_upper) / 2
                 q_init += np.random.normal(0, 0.3, size=q_init.shape)
                 q_init = np.clip(q_init, limits_lower, limits_upper)
             else:
-                # Configuration based on previous attempts
                 q_init = np.random.uniform(limits_lower, limits_upper)
-                # Bias toward successful regions if we had partial success
                 if q_solution is not None:
                     weight = 0.3
                     q_init = weight * q_solution + (1 - weight) * q_init
@@ -712,28 +711,16 @@ class MotionPlanner:
             q_candidate, converged = self.ik.solve(target_pose, q_init=q_init)
             
             if converged and self._validate_ik_solution(q_candidate, target_pose):
-                logger.info(f"Constraint-aware IK succeeded on attempt {attempt + 1}")
                 return q_candidate, True
             
-            # Keep best solution so far for potential fallback
             if converged and q_solution is None:
                 q_solution = q_candidate
         
-        logger.warning(f"All {max_attempts} IK attempts failed constraint validation")
         return None, False
     
     def _validate_ik_solution(self, q_solution: np.ndarray, 
                             target_pose: np.ndarray) -> bool:
-        """
-        Enhanced IK solution validation with comprehensive collision checking.
-        
-        Args:
-            q_solution: Joint configuration to validate
-            target_pose: Original target pose for accuracy checking
-            
-        Returns:
-            True if solution is valid and collision-free
-        """
+        """Validate IK solution for accuracy and collision-free status."""
         try:
             # Verify forward kinematics accuracy
             T_achieved = self.fk.compute_forward_kinematics(q_solution)
@@ -741,9 +728,7 @@ class MotionPlanner:
             
             # Position error check
             pos_error = np.linalg.norm(tcp_position - target_pose[:3, 3])
-            pos_tolerance = self.config['ik_position_tolerance']
-            if pos_error > pos_tolerance:
-                logger.debug(f"IK solution has large position error: {pos_error:.6f}m > {pos_tolerance}m")
+            if pos_error > self.config['ik_position_tolerance']:
                 return False
             
             # Orientation error check
@@ -756,21 +741,16 @@ class MotionPlanner:
             
             rot_tolerance = np.radians(self.config['ik_rotation_tolerance'])
             if rot_error > rot_tolerance:
-                logger.debug(f"IK solution has large rotation error: {np.degrees(rot_error):.3f}° > {self.config['ik_rotation_tolerance']}°")
                 return False
             
-            # Enhanced collision checking
-            joint_positions = [tcp_position]  # Simplified - would need full link positions for complete check
-            
+            # Collision checking
             collision_result = self.collision_checker.check_configuration_collision(
-                q_solution, tcp_position, joint_positions
+                q_solution, tcp_position, self.fk.compute_forward_kinematics
             )
             
             if collision_result.is_collision:
-                logger.debug(f"IK solution has collision: {collision_result.details}")
                 return False
             
-            logger.debug(f"IK solution validated - pos_err: {pos_error:.6f}m, rot_err: {np.degrees(rot_error):.3f}°")
             return True
             
         except Exception as e:
@@ -778,30 +758,21 @@ class MotionPlanner:
             return False
     
     def validate_motion_path(self, joint_path: List[np.ndarray]) -> Tuple[bool, str]:
-        """
-        Validate entire motion path for collisions including intermediate points.
-        
-        Args:
-            joint_path: List of joint configurations defining the path
-            
-        Returns:
-            Tuple of (is_valid, error_message)
-        """
+        """Validate entire motion path for collisions."""
         try:
             # Check each waypoint for collision
             for i, q in enumerate(joint_path):
                 T = self.fk.compute_forward_kinematics(q)
                 tcp_pos = T[:3, 3]
-                joint_positions = [tcp_pos]  # Simplified
                 
                 collision_result = self.collision_checker.check_configuration_collision(
-                    q, tcp_pos, joint_positions
+                    q, tcp_pos, self.fk.compute_forward_kinematics
                 )
                 
                 if collision_result.is_collision:
                     return False, f"Waypoint {i} collision: {collision_result.details}"
             
-            # Check path between waypoints for intermediate collisions
+            # Check path between waypoints
             collision_result = self.collision_checker.check_path_collision(
                 joint_path, self.fk.compute_forward_kinematics
             )
@@ -814,6 +785,10 @@ class MotionPlanner:
         except Exception as e:
             return False, f"Path validation failed: {str(e)}"
     
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get motion planning statistics."""
+        return self.stats.copy()
+    
     def get_collision_info(self) -> Dict[str, Any]:
         """Get collision checker configuration and status."""
         return self.collision_checker.get_collision_summary()
@@ -822,3 +797,18 @@ class MotionPlanner:
         """Update motion planning configuration."""
         self.config.update(new_config)
         logger.info("Motion planner configuration updated")
+
+    def set_progress_callback(self, callback):
+        """Set progress callback for motion planning operations."""
+        self.progress_callback = callback
+        self.config['progress_feedback'] = True
+        logger.info("Progress feedback enabled")
+
+    def enable_progress_feedback(self, enable: bool = True):
+        """Enable or disable progress feedback."""
+        self.config['progress_feedback'] = enable
+        if enable:
+            logger.info("Progress feedback enabled")
+        else:
+            logger.info("Progress feedback disabled")
+

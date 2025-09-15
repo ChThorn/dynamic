@@ -23,12 +23,12 @@ joint_limits:
   j4: # wrist 1
     min: -360 # degrees
     max: 360 # degrees
-  j5: # wrist 2
-    min: -360 # degrees
-    max: 360 # degrees
-  j6: # wrist 3
-    min: -360 # degrees
-    max: 360 # degrees
+  j5: # wrist 2 (limited when tool/gripper attached)
+    min: -180 # degrees (realistic limit with tool attached)
+    max: 180 # degrees (prevents cable wrap/tool collision)
+  j6: # wrist 3 (tool rotation - limited by cables/pneumatics)
+    min: -270 # degrees (realistic limit with tool cables)
+    max: 270 # degrees (prevents excessive cable twist)
 
 # Workspace boundaries in meters
 # Robot base mounted on floor (z=0), working above 60mm wood surface
@@ -97,6 +97,13 @@ description: |
 
   All spatial dimensions are in meters (SI units) for consistency.
   All angular dimensions are in degrees and converted to radians internally.
+
+  IMPORTANT: Joint limits are configured for production use with tools/grippers attached.
+  J5 and J6 limits are conservative to account for:
+  - Tool/gripper geometry and collision avoidance
+  - Cable management (power, pneumatic, communication cables)
+  - Mechanical stress on wrist joints when carrying payload
+  - Practical accessibility for maintenance and operation
 
   Coordinate system:
   - X: Forward(+) / Backward(-) from robot base
