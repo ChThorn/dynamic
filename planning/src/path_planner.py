@@ -352,12 +352,17 @@ class AOTRRCPathPlanner:
         self.constraints_checker = ConstraintsChecker(config_path)
         self.n_joints = kinematics_fk.n_joints
         
-        # AORRTC parameters
-        self.max_iter = 5000
-        self.step_size = np.radians(10)  # 10 degrees in radians
-        self.goal_bias = 0.1
-        self.connect_threshold = np.radians(15)  # 15 degrees
-        self.rewire_radius = np.radians(20)  # 20 degrees
+        # AORRTC parameters (optimized for real-time performance)
+        self.max_iter = 1000  # Reduced from 5000 for faster planning
+        self.step_size = np.radians(20)  # Increased from 10° to 20° for larger steps
+        self.goal_bias = 0.15  # Increased bias toward goal for faster convergence
+        self.connect_threshold = np.radians(25)  # Increased for easier connections
+        self.rewire_radius = np.radians(30)  # Increased for better optimization
+        
+        # Early termination parameters for real-time operation
+        self.early_termination_threshold = 200  # Stop if no improvement for 200 iterations
+        self.quality_threshold = 1.1  # Accept path within 10% of optimal
+        self.fast_mode = False  # Can be enabled for even faster planning
         
         # Planning state
         self.tree_a: Dict[str, List] = {'points': [], 'parents': [], 'costs': []}
@@ -371,7 +376,30 @@ class AOTRRCPathPlanner:
         # Joint limits for sampling
         self.joint_limits = self._get_joint_limits()
         
-        logger.info("AORRTC path planner initialized with advanced algorithms")
+        logger.info("AORRTC path planner initialized with real-time optimized parameters")
+    
+    def enable_fast_mode(self, enable: bool = True):
+        """
+        Enable/disable fast mode for real-time operation.
+        Fast mode sacrifices some path quality for speed.
+        """
+        self.fast_mode = enable
+        if enable:
+            # Ultra-fast parameters for real-time operation
+            self.max_iter = 500
+            self.step_size = np.radians(30)  # 30° steps
+            self.goal_bias = 0.2
+            self.early_termination_threshold = 100
+            self.quality_threshold = 1.2  # Accept 20% suboptimal paths
+            logger.info("Fast mode enabled: ~5-15 second planning times")
+        else:
+            # Standard real-time parameters
+            self.max_iter = 1000
+            self.step_size = np.radians(20)
+            self.goal_bias = 0.15
+            self.early_termination_threshold = 200
+            self.quality_threshold = 1.1
+            logger.info("Standard mode enabled: ~10-30 second planning times")
     
     def plan_aorrtc_path(self, q_start: np.ndarray, q_goal: np.ndarray, 
                         max_iterations: Optional[int] = None) -> PlanningResult:
@@ -415,10 +443,18 @@ class AOTRRCPathPlanner:
         for i in range(self.max_iter):
             self.iteration = i
             
-            # Early termination if no improvement
-            if self.best_path and (i - self.last_improvement) > 1000:
-                logger.info(f"Early termination at iteration {i} - no improvement")
+            # Early termination for real-time operation
+            if self.best_path and (i - self.last_improvement) > self.early_termination_threshold:
+                logger.info(f"Early termination at iteration {i} - no improvement for {self.early_termination_threshold} iterations")
                 break
+            
+            # Quality-based early termination
+            if self.best_path and self.best_cost > 0:
+                # Calculate theoretical minimum (straight line distance)
+                min_possible_cost = np.linalg.norm(q_goal - q_start)
+                if self.best_cost <= min_possible_cost * self.quality_threshold:
+                    logger.info(f"Early termination at iteration {i} - acceptable quality achieved")
+                    break
             
             # Progress reporting
             if i % 500 == 0 and i > 0:
@@ -748,6 +784,24 @@ class PathPlanner:
         self.aorrtc_planner = AOTRRCPathPlanner(kinematics_fk, kinematics_ik, config_path)
         
         logger.info("Clean path planner initialized: AORRTC primary + smart fallback")
+    
+    def enable_fast_mode(self, enable: bool = True):
+        """Enable fast mode for real-time robot operation."""
+        self.aorrtc_planner.enable_fast_mode(enable)
+        if enable:
+            logger.info("Path planner fast mode enabled for real-time operation")
+        else:
+            logger.info("Path planner standard mode enabled")
+    
+    def get_planning_stats(self) -> Dict[str, Any]:
+        """Get current planning configuration and performance stats."""
+        return {
+            'max_iterations': self.aorrtc_planner.max_iter,
+            'step_size_degrees': np.degrees(self.aorrtc_planner.step_size),
+            'fast_mode': self.aorrtc_planner.fast_mode,
+            'early_termination_threshold': self.aorrtc_planner.early_termination_threshold,
+            'quality_threshold': self.aorrtc_planner.quality_threshold
+        }
     
     def plan_path(self, q_start: np.ndarray, q_goal: np.ndarray,
                   max_iterations: Optional[int] = None, 

@@ -132,7 +132,8 @@ class MotionPlanner:
             'enable_fallbacks': True,
             'max_attempts': 3,
             'fallback_strategies': [PlanningStrategy.CARTESIAN_SPACE, PlanningStrategy.HYBRID],
-            'progress_feedback': False  # Enable for progress updates
+            'progress_feedback': False,  # Enable for progress updates
+            'enable_timing_breakdown': False  # Enable for performance profiling
         }
         
         # Statistics
@@ -182,7 +183,7 @@ class MotionPlanner:
             logger.info("Reachability maps built and cached")
     
     def solve_ik_with_cspace(self, target_pose: np.ndarray, q_current: Optional[np.ndarray] = None) -> Tuple[Optional[np.ndarray], bool]:
-        """Solve IK with C-space optimization if available."""
+        """Solve IK with C-space optimization if available, with multiple initial guess fallbacks."""
         if self.cspace_analysis_enabled and self.config_analyzer:
             # Get optimal seed from C-space analysis
             target_position = target_pose[:3, 3]
@@ -192,9 +193,32 @@ class MotionPlanner:
                 if converged:
                     return q_solution, True
         
-        # Fallback to standard IK
-        q_init = q_current if q_current is not None else np.zeros(6)
-        return self.ik.solve(target_pose, q_init=q_init)
+        # Try multiple initial guesses for better success rate
+        initial_guesses = [
+            q_current if q_current is not None else np.zeros(6),  # Current or zero
+            np.array([0, -np.pi/2, np.pi/2, 0, np.pi/2, 0]),     # Home position
+            np.array([np.pi/4, -np.pi/3, np.pi/3, 0, np.pi/3, np.pi/4]),  # Alternative 1
+            np.array([-np.pi/4, -np.pi/4, np.pi/4, 0, np.pi/4, -np.pi/4]), # Alternative 2
+            np.array([0, 0, 0, 0, 0, 0]),                         # Zero position
+            np.array([np.pi/6, -np.pi/4, np.pi/4, np.pi/6, np.pi/4, 0]),  # Conservative pose
+            np.random.uniform(-np.pi, np.pi, 6),                  # Random guess 1
+            np.random.uniform(-np.pi, np.pi, 6),                  # Random guess 2
+            np.random.uniform(-np.pi, np.pi, 6),                  # Random guess 3
+        ]
+        
+        for i, q_init in enumerate(initial_guesses):
+            try:
+                q_solution, converged = self.ik.solve(target_pose, q_init=q_init)
+                if converged:
+                    if i > 0:  # Log when fallback was needed
+                        logger.info(f"IK converged using initial guess #{i+1}")
+                    return q_solution, True
+            except Exception as e:
+                logger.debug(f"IK attempt {i+1} failed: {e}")
+                continue
+        
+        # All attempts failed
+        return None, False
     
     def plan_motion(self, start_config: np.ndarray, goal_config: np.ndarray,
                    strategy: Optional[PlanningStrategy] = None,
@@ -290,14 +314,16 @@ class MotionPlanner:
                 )
     
     def plan_cartesian_motion(self, start_pose: np.ndarray, goal_pose: np.ndarray,
+                            current_joints: Optional[np.ndarray] = None,
                             orientation_constraint: bool = True,
                             **kwargs) -> MotionPlanningResult:
         """
-        Plan motion between Cartesian poses. Thread-safe.
+        Plan motion between Cartesian poses following proper robot motion planning procedure.
         
         Args:
             start_pose: Starting 4x4 transformation matrix
-            goal_pose: Goal 4x4 transformation matrix  
+            goal_pose: Goal 4x4 transformation matrix
+            current_joints: Current robot joint configuration (if known)
             orientation_constraint: Whether to maintain orientation constraints
             **kwargs: Additional planning parameters
             
@@ -308,24 +334,60 @@ class MotionPlanner:
             start_time = time.time()
         
             try:
-                # Convert poses to joint configurations using C-space optimization
-                q_start, start_converged = self.solve_ik_with_cspace(start_pose)
+                # STEP 1: Determine initial guess based on robot state
+                if current_joints is not None:
+                    # Use current robot state as initial guess (proper robot procedure)
+                    q_init_start = current_joints
+                    logger.info("Using current robot joints as initial guess for start pose")
+                else:
+                    # Fallback: use home position for unknown robot state
+                    q_init_start = np.array([0, -np.pi/2, np.pi/2, 0, np.pi/2, 0])  # Home position
+                    logger.info("Using home position as initial guess (current robot state unknown)")
+                
+                # STEP 2: Solve IK for start pose from current/initial state
+                q_start, start_converged = self.ik.solve(start_pose, q_init=q_init_start)
                 if not start_converged:
-                    return MotionPlanningResult(
-                        status=PlanningStatus.IK_FAILED,
-                        error_message="Failed to solve IK for start pose",
-                        planning_time=time.time() - start_time
-                    )
-            
-                q_goal, goal_converged = self.solve_ik_with_cspace(goal_pose)
+                    # Try fallback initial guesses only if primary method fails
+                    logger.warning("Primary IK for start pose failed, trying fallback initial guesses")
+                    q_start, start_converged = self.solve_ik_with_cspace(start_pose)
+                    if not start_converged:
+                        return MotionPlanningResult(
+                            status=PlanningStatus.IK_FAILED,
+                            error_message="Failed to solve IK for start pose",
+                            planning_time=time.time() - start_time
+                        )
+                
+                # STEP 3: Solve IK for goal pose using start pose joints as initial guess (continuity!)
+                q_goal, goal_converged = self.ik.solve(goal_pose, q_init=q_start)
                 if not goal_converged:
-                    return MotionPlanningResult(
-                        status=PlanningStatus.IK_FAILED,
-                        error_message="Failed to solve IK for goal pose",
-                        planning_time=time.time() - start_time
-                    )
-            
-                # Plan in joint space between IK solutions
+                    # Try fallback initial guesses only if continuous method fails
+                    logger.warning("Continuous IK for goal pose failed, trying fallback initial guesses")
+                    q_goal, goal_converged = self.solve_ik_with_cspace(goal_pose, q_current=q_start)
+                    if not goal_converged:
+                        # Final fallback: try with multiple random seeds
+                        logger.warning("All standard IK methods failed, trying aggressive fallback")
+                        for attempt in range(10):
+                            q_random = np.random.uniform(-np.pi, np.pi, 6)
+                            q_try, converged = self.ik.solve(goal_pose, q_init=q_random)
+                            if converged:
+                                q_goal = q_try
+                                goal_converged = True
+                                logger.info(f"IK converged using random seed attempt #{attempt+1}")
+                                break
+                        
+                        if not goal_converged:
+                            return MotionPlanningResult(
+                                status=PlanningStatus.IK_FAILED,
+                                error_message="Failed to solve IK for goal pose after all attempts",
+                                planning_time=time.time() - start_time
+                            )
+                
+                # STEP 4: Validate joint space continuity
+                joint_diff = np.linalg.norm(q_goal - q_start)
+                if joint_diff > np.pi:  # Large joint space jump
+                    logger.warning(f"Large joint space jump detected: {joint_diff:.3f} rad")
+                
+                # STEP 5: Plan smooth motion in joint space
                 result = self.plan_motion(
                     q_start, q_goal, 
                     strategy=PlanningStrategy.CARTESIAN_SPACE,
@@ -349,6 +411,115 @@ class MotionPlanner:
                     error_message=f"Cartesian planning failed: {str(e)}",
                     planning_time=time.time() - start_time
                 )
+    
+    def plan_sequential_cartesian_motion(self, poses: List[np.ndarray], 
+                                       current_joints: Optional[np.ndarray] = None,
+                                       **kwargs) -> MotionPlanningResult:
+        """
+        Plan sequential motion through multiple Cartesian poses (proper robot procedure).
+        
+        This method follows real robot motion planning procedure:
+        1. Uses current robot state as starting point
+        2. Solves each IK using previous solution as initial guess (continuity)
+        3. Plans smooth trajectories between sequential joint configurations
+        
+        Args:
+            poses: List of 4x4 transformation matrices to visit sequentially
+            current_joints: Current robot joint configuration (if known)
+            **kwargs: Additional planning parameters
+            
+        Returns:
+            MotionPlanningResult with complete sequential motion plan
+        """
+        if len(poses) < 2:
+            return MotionPlanningResult(
+                status=PlanningStatus.FAILED,
+                error_message="Need at least 2 poses for sequential motion",
+                planning_time=0.0
+            )
+        
+        start_time = time.time()
+        all_waypoints = []
+        all_cartesian_waypoints = []
+        
+        try:
+            # Initialize with current robot state or home position
+            if current_joints is not None:
+                q_current = current_joints.copy()
+                logger.info("Starting sequential motion from current robot joints")
+            else:
+                q_current = np.array([0, -np.pi/2, np.pi/2, 0, np.pi/2, 0])  # Home position
+                logger.info("Starting sequential motion from home position")
+            
+            # Process each pose sequentially
+            for i, target_pose in enumerate(poses):
+                logger.info(f"Planning to pose {i+1}/{len(poses)}")
+                
+                # Solve IK using previous joint configuration as initial guess
+                q_target, converged = self.ik.solve(target_pose, q_init=q_current)
+                
+                if not converged:
+                    # Fallback to multiple initial guesses only if needed
+                    logger.warning(f"Sequential IK failed for pose {i+1}, trying fallback methods")
+                    q_target, converged = self.solve_ik_with_cspace(target_pose)
+                    
+                    if not converged:
+                        return MotionPlanningResult(
+                            status=PlanningStatus.IK_FAILED,
+                            error_message=f"Failed to solve IK for pose {i+1}",
+                            planning_time=time.time() - start_time
+                        )
+                
+                # Plan motion from current to target
+                segment_result = self.plan_motion(q_current, q_target, **kwargs)
+                
+                if segment_result.status != PlanningStatus.SUCCESS:
+                    return MotionPlanningResult(
+                        status=segment_result.status,
+                        error_message=f"Failed to plan segment {i+1}: {segment_result.error_message}",
+                        planning_time=time.time() - start_time
+                    )
+                
+                # Accumulate waypoints
+                if segment_result.plan and segment_result.plan.joint_waypoints:
+                    if i == 0:
+                        # Include all waypoints for first segment
+                        all_waypoints.extend(segment_result.plan.joint_waypoints)
+                    else:
+                        # Skip first waypoint for subsequent segments to avoid duplication
+                        all_waypoints.extend(segment_result.plan.joint_waypoints[1:])
+                
+                # Generate Cartesian waypoints
+                for q in (segment_result.plan.joint_waypoints if segment_result.plan else []):
+                    T = self.fk.compute_forward_kinematics(q)
+                    all_cartesian_waypoints.append(T)
+                
+                # Update current position for next iteration
+                q_current = q_target.copy()
+                
+                logger.info(f"Pose {i+1} reached, joint difference: {np.linalg.norm(q_target - q_current):.3f} rad")
+            
+            # Create combined result
+            combined_plan = MotionPlan(
+                strategy_used=PlanningStrategy.CARTESIAN_SPACE,
+                joint_waypoints=all_waypoints,
+                cartesian_waypoints=all_cartesian_waypoints,
+                planning_time=time.time() - start_time
+            )
+            
+            return MotionPlanningResult(
+                status=PlanningStatus.SUCCESS,
+                plan=combined_plan,
+                planning_time=time.time() - start_time,
+                error_message=None
+            )
+            
+        except Exception as e:
+            return MotionPlanningResult(
+                status=PlanningStatus.FAILED,
+                error_message=f"Sequential motion planning failed: {str(e)}",
+                planning_time=time.time() - start_time
+            )
     
     def plan_waypoint_motion(self, waypoints: List[np.ndarray],
                            strategy: Optional[PlanningStrategy] = None,
@@ -499,29 +670,44 @@ class MotionPlanner:
     
     def _plan_joint_space(self, start_config: np.ndarray, goal_config: np.ndarray,
                          waypoint_count: int, **kwargs) -> MotionPlanningResult:
-        """Plan motion in joint space."""
+        """Plan motion in joint space with optional timing breakdown."""
         try:
-            # Use path planner to generate waypoints
+            timing_breakdown = {}
+            timing_enabled = self.config.get('enable_timing_breakdown', False)
+            
+            # Path planning phase
+            path_start_time = time.time()
             path_result = self.path_planner.plan_path(
                 start_config, goal_config, max_iterations=waypoint_count*50, **kwargs
             )
+            if timing_enabled:
+                timing_breakdown['path_planning'] = time.time() - path_start_time
             
             if not path_result.success:
-                return MotionPlanningResult(
+                result = MotionPlanningResult(
                     status=PlanningStatus.FAILED,
                     error_message=path_result.error_message
                 )
+                if timing_enabled:
+                    result.planning_time = timing_breakdown['path_planning']
+                return result
             
-            # Generate trajectory
+            # Trajectory generation phase
+            traj_start_time = time.time()
             traj_kwargs = {k: v for k, v in kwargs.items() 
                           if k not in ['use_aorrtc', 'max_iterations', 'step_size']}
             traj_result = self.trajectory_planner.plan_trajectory(path_result.path, **traj_kwargs)
+            if timing_enabled:
+                timing_breakdown['trajectory_planning'] = time.time() - traj_start_time
             
             if not traj_result.success:
-                return MotionPlanningResult(
+                result = MotionPlanningResult(
                     status=PlanningStatus.FAILED,
                     error_message=traj_result.error_message
                 )
+                if timing_enabled:
+                    result.planning_time = sum(timing_breakdown.values())
+                return result
             
             # Create plan
             plan = MotionPlan(
@@ -530,6 +716,12 @@ class MotionPlanner:
                 strategy_used=PlanningStrategy.JOINT_SPACE,
                 validation_results=path_result.validation_results
             )
+            
+            # Add timing breakdown to validation results if enabled
+            if timing_enabled:
+                plan.validation_results = plan.validation_results or {}
+                plan.validation_results['timing_breakdown'] = timing_breakdown
+                logger.info(f"Joint space planning breakdown: {timing_breakdown}")
             
             return MotionPlanningResult(
                 status=PlanningStatus.SUCCESS,
@@ -832,4 +1024,36 @@ class MotionPlanner:
             logger.info("Progress feedback enabled")
         else:
             logger.info("Progress feedback disabled")
+    
+    def enable_fast_mode(self, enable: bool = True):
+        """Enable fast mode for real-time robot operation."""
+        self.path_planner.enable_fast_mode(enable)
+        if enable:
+            logger.info("Motion planner fast mode enabled for real-time operation")
+        else:
+            logger.info("Motion planner standard mode enabled")
+    
+    def enable_timing_breakdown(self, enable: bool = True):
+        """Enable detailed timing breakdown for performance analysis."""
+        with self._config_lock:
+            self.config['enable_timing_breakdown'] = enable
+        if enable:
+            logger.info("Timing breakdown enabled for performance profiling")
+        else:
+            logger.info("Timing breakdown disabled")
+    
+    def get_performance_config(self) -> Dict[str, Any]:
+        """Get current performance configuration."""
+        path_stats = self.path_planner.get_planning_stats()
+        with self._config_lock:
+            config_snapshot = self.config.copy()
+        
+        return {
+            'motion_planner': {
+                'timing_breakdown_enabled': config_snapshot.get('enable_timing_breakdown', False),
+                'progress_feedback_enabled': config_snapshot.get('progress_feedback', False),
+                'max_planning_time': config_snapshot.get('max_planning_time', 30.0)
+            },
+            'path_planner': path_stats
+        }
 
