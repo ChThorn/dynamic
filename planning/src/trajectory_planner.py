@@ -128,10 +128,50 @@ class TrajectoryPlanner:
         """
         start_time = time.time()
         
+        # Validate inputs
+        if not waypoints:
+            return TrajectoryResult(
+                success=False,
+                error_message="No waypoints provided",
+                computation_time=time.time() - start_time
+            )
+        
         if len(waypoints) < 2:
             return TrajectoryResult(
                 success=False,
                 error_message="Need at least 2 waypoints for trajectory",
+                computation_time=time.time() - start_time
+            )
+        
+        # Validate waypoint dimensions
+        try:
+            waypoints_array = np.array(waypoints)
+            if len(waypoints_array.shape) != 2:
+                return TrajectoryResult(
+                    success=False,
+                    error_message=f"Invalid waypoint shape: expected 2D array, got {waypoints_array.shape}",
+                    computation_time=time.time() - start_time
+                )
+            
+            n_waypoints, n_joints = waypoints_array.shape
+            if n_joints != 6:
+                return TrajectoryResult(
+                    success=False,
+                    error_message=f"Invalid joint count: expected 6, got {n_joints}",
+                    computation_time=time.time() - start_time
+                )
+        except Exception as e:
+            return TrajectoryResult(
+                success=False,
+                error_message=f"Invalid waypoint format: {str(e)}",
+                computation_time=time.time() - start_time
+            )
+        
+        # Validate time scaling
+        if time_scaling <= 0:
+            return TrajectoryResult(
+                success=False,
+                error_message=f"Invalid time scaling: {time_scaling} (must be > 0)",
                 computation_time=time.time() - start_time
             )
         
@@ -317,6 +357,9 @@ class TrajectoryPlanner:
         try:
             n_points = len(path)
             
+            if n_points < 2:
+                return {'success': False, 'error': 'Path too short for timing generation'}
+            
             # Compute path lengths between consecutive points
             path_lengths = np.zeros(n_points)
             for i in range(1, n_points):
@@ -331,10 +374,13 @@ class TrajectoryPlanner:
             
             # Estimate time based on velocity limits
             max_vel = self.config['max_joint_velocity']
+            if max_vel <= 0:
+                return {'success': False, 'error': 'Invalid max velocity configuration'}
+            
             min_time = total_distance / max_vel
             
-            # Apply time scaling
-            total_time = min_time * time_scaling
+            # Apply time scaling with bounds checking
+            total_time = max(0.001, min_time * time_scaling)  # Minimum 1ms duration
             
             # Generate time array based on distance
             times = np.zeros(n_points)

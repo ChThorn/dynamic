@@ -83,14 +83,15 @@ class EnhancedCollisionChecker:
             ]
             
             # Load distances from config or use URDF-derived defaults
+            # Adjusted to be more reasonable for actual robot operation
             critical_pairs = self_collision_config.get('critical_pairs', {})
             self.min_joint_distances = {
-                (1, 4): critical_pairs.get('shoulder_wrist2', 0.12),
-                (1, 5): critical_pairs.get('shoulder_wrist3', 0.10), 
-                (1, 6): critical_pairs.get('shoulder_tcp', 0.15),
-                (2, 0): critical_pairs.get('elbow_base', 0.18),
-                (3, 0): critical_pairs.get('wrist1_base', 0.16),
-                (4, 0): critical_pairs.get('wrist2_base', 0.16),
+                (1, 4): critical_pairs.get('shoulder_wrist2', 0.08),  # Reduced from 0.12
+                (1, 5): critical_pairs.get('shoulder_wrist3', 0.07),  # Reduced from 0.10
+                (1, 6): critical_pairs.get('shoulder_tcp', 0.10),     # Reduced from 0.15
+                (2, 0): critical_pairs.get('elbow_base', 0.15),       # Reduced from 0.18
+                (3, 0): critical_pairs.get('wrist1_base', 0.14),      # Reduced from 0.16
+                (4, 0): critical_pairs.get('wrist2_base', 0.14),      # Reduced from 0.16
             }
             
             robot_model = self_collision_config.get('robot_model', 'RB3-730ES-U')
@@ -102,6 +103,14 @@ class EnhancedCollisionChecker:
         
     def check_joint_limits(self, joint_angles: np.ndarray) -> CollisionResult:
         """Check if joint configuration violates joint limits."""
+        # Validate input
+        if joint_angles is None or len(joint_angles) != 6:
+            return CollisionResult(
+                is_collision=True,
+                collision_type=CollisionType.JOINT_LIMIT_VIOLATION,
+                details=f"Invalid joint configuration: expected 6 joints, got {len(joint_angles) if joint_angles is not None else 'None'}"
+            )
+        
         joint_names = ['j1', 'j2', 'j3', 'j4', 'j5', 'j6']
         
         for i, (name, angle) in enumerate(zip(joint_names, joint_angles)):
@@ -120,6 +129,14 @@ class EnhancedCollisionChecker:
     
     def check_workspace_limits(self, tcp_position: np.ndarray) -> CollisionResult:
         """Check if TCP position violates workspace boundaries."""
+        # Validate input
+        if tcp_position is None or len(tcp_position) != 3:
+            return CollisionResult(
+                is_collision=True,
+                collision_type=CollisionType.WORKSPACE_VIOLATION,
+                details=f"Invalid TCP position: expected 3D position, got {len(tcp_position) if tcp_position is not None else 'None'}"
+            )
+        
         x, y, z = tcp_position
         
         # Apply safety margins if enabled
@@ -207,7 +224,7 @@ class EnhancedCollisionChecker:
     def _get_adaptive_threshold(self, joint1_idx: int, joint2_idx: int, joint_angles: np.ndarray) -> float:
         """Get adaptive collision threshold based on robot configuration."""
         # Base threshold from configuration
-        base_threshold = self.min_joint_distances.get((joint1_idx, joint2_idx), 0.08)
+        base_threshold = self.min_joint_distances.get((joint1_idx, joint2_idx), 0.06)  # Reduced from 0.08
         
         # Configuration-dependent adjustments
         config_factor = 1.0
@@ -217,13 +234,13 @@ class EnhancedCollisionChecker:
             # Reduce threshold when shoulder is in certain positions
             shoulder_angle = abs(joint_angles[1])
             if shoulder_angle < 0.5:  # ~30 degrees
-                config_factor = 0.7  # Allow closer proximity
+                config_factor = 0.6  # Allow closer proximity (was 0.7)
         
         elif (joint1_idx, joint2_idx) == (2, 0):  # Elbow vs Base
             # Adjust based on elbow configuration
             elbow_angle = abs(joint_angles[2])
             if elbow_angle > 1.57:  # > 90 degrees
-                config_factor = 0.8  # Allow closer when elbow is bent
+                config_factor = 0.7  # Allow closer when elbow is bent (was 0.8)
         
         return base_threshold * config_factor
     

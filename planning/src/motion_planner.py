@@ -184,7 +184,10 @@ class MotionPlanner:
     
     def solve_ik_with_cspace(self, target_pose: np.ndarray, q_current: Optional[np.ndarray] = None) -> Tuple[Optional[np.ndarray], bool]:
         """Solve IK with C-space optimization if available, with multiple initial guess fallbacks."""
-        if self.cspace_analysis_enabled and self.config_analyzer:
+        with self._config_lock:  # Add thread safety
+            cspace_enabled = self.cspace_analysis_enabled
+            
+        if cspace_enabled and self.config_analyzer:
             # Get optimal seed from C-space analysis
             target_position = target_pose[:3, 3]
             q_seed = self.config_analyzer.get_best_ik_region(target_position)
@@ -886,7 +889,8 @@ class MotionPlanner:
         Returns:
             Tuple of (joint solution, success flag)
         """
-        max_attempts = max_attempts or self.config['ik_max_attempts']
+        with self._config_lock:  # Add thread safety
+            max_attempts = max_attempts or self.config['ik_max_attempts']
         
         # First attempt with C-space optimization
         q_solution, converged = self.solve_ik_with_cspace(target_pose)
@@ -936,8 +940,12 @@ class MotionPlanner:
             tcp_position = T_achieved[:3, 3]
             
             # Position error check
+            with self._config_lock:  # Add thread safety
+                pos_tolerance = self.config['ik_position_tolerance']
+                rot_tolerance = np.radians(self.config['ik_rotation_tolerance'])
+            
             pos_error = np.linalg.norm(tcp_position - target_pose[:3, 3])
-            if pos_error > self.config['ik_position_tolerance']:
+            if pos_error > pos_tolerance:
                 return False
             
             # Orientation error check

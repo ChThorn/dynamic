@@ -353,15 +353,15 @@ class AOTRRCPathPlanner:
         self.n_joints = kinematics_fk.n_joints
         
         # AORRTC parameters (optimized for real-time performance)
-        self.max_iter = 1000  # Reduced from 5000 for faster planning
-        self.step_size = np.radians(20)  # Increased from 10° to 20° for larger steps
-        self.goal_bias = 0.15  # Increased bias toward goal for faster convergence
-        self.connect_threshold = np.radians(25)  # Increased for easier connections
-        self.rewire_radius = np.radians(30)  # Increased for better optimization
+        self.max_iter = 800  # Reduced from 1000 for faster planning
+        self.step_size = np.radians(25)  # Increased from 20° to 25° for larger steps
+        self.goal_bias = 0.20  # Increased from 0.15 for faster convergence
+        self.connect_threshold = np.radians(30)  # Increased from 25° for easier connections
+        self.rewire_radius = np.radians(35)  # Increased from 30° for better optimization
         
         # Early termination parameters for real-time operation
-        self.early_termination_threshold = 200  # Stop if no improvement for 200 iterations
-        self.quality_threshold = 1.1  # Accept path within 10% of optimal
+        self.early_termination_threshold = 150  # Reduced from 200 for faster termination
+        self.quality_threshold = 1.15  # Accept path within 15% of optimal (was 10%)
         self.fast_mode = False  # Can be enabled for even faster planning
         
         # Planning state
@@ -386,20 +386,20 @@ class AOTRRCPathPlanner:
         self.fast_mode = enable
         if enable:
             # Ultra-fast parameters for real-time operation
-            self.max_iter = 500
-            self.step_size = np.radians(30)  # 30° steps
-            self.goal_bias = 0.2
-            self.early_termination_threshold = 100
-            self.quality_threshold = 1.2  # Accept 20% suboptimal paths
-            logger.info("Fast mode enabled: ~5-15 second planning times")
+            self.max_iter = 400  # Reduced from 500
+            self.step_size = np.radians(35)  # Increased from 30°
+            self.goal_bias = 0.25  # Increased from 0.2
+            self.early_termination_threshold = 80  # Reduced from 100
+            self.quality_threshold = 1.25  # Accept 25% suboptimal paths (was 20%)
+            logger.info("Fast mode enabled: ~3-10 second planning times")
         else:
             # Standard real-time parameters
-            self.max_iter = 1000
-            self.step_size = np.radians(20)
-            self.goal_bias = 0.15
-            self.early_termination_threshold = 200
-            self.quality_threshold = 1.1
-            logger.info("Standard mode enabled: ~10-30 second planning times")
+            self.max_iter = 800
+            self.step_size = np.radians(25)
+            self.goal_bias = 0.20
+            self.early_termination_threshold = 150
+            self.quality_threshold = 1.15
+            logger.info("Standard mode enabled: ~5-20 second planning times")
     
     def plan_aorrtc_path(self, q_start: np.ndarray, q_goal: np.ndarray, 
                         max_iterations: Optional[int] = None) -> PlanningResult:

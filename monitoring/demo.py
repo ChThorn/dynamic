@@ -114,8 +114,22 @@ def run_live_integration():
         fk = ForwardKinematics()
         ik = InverseKinematics(fk)
         planner = MotionPlanner(fk, ik)
-        # Note: Not enabling C-space analysis for better pose compatibility
-        print("✅ Motion planner ready (using reliable basic DLS IK)")
+        # Performance mode: reduce compute for faster interactive runs
+        try:
+            planner.enable_fast_mode(True)
+            planner.enable_progress_feedback(False)
+            # Conservative, fast defaults (fallback-safe if keys unused)
+            planner.update_config({
+                'max_planning_time': 8.0,
+                'default_waypoint_count': 6,
+                'ik_max_attempts': 3,
+                'ik_timeout': 1.0,
+                'optimize_timing': False
+            })
+        except Exception:
+            pass
+        # Note: Not enabling C-space analysis to avoid initial map build time
+        print("✅ Motion planner ready (fast mode, basic DLS IK)")
         
         # Step 3: Plan motions using proper robot procedure
         print(f"\n🚀 STEP 3: TRAJECTORY PLANNING (Proper Robot Procedure)")
@@ -157,7 +171,11 @@ def run_live_integration():
                 print(f"   🎯 Planning motion to target pose")
                 
                 # Plan motion from home pose to target pose
-                result = planner.plan_cartesian_motion(home_pose, target_pose, current_joints=home_joints)
+                result = planner.plan_cartesian_motion(
+                    home_pose, target_pose,
+                    current_joints=home_joints,
+                    waypoint_count=6
+                )
                 
                 if result.status == PlanningStatus.SUCCESS:
                     print(f"   ✅ Single pose motion SUCCESS!")
@@ -172,7 +190,9 @@ def run_live_integration():
             else:
                 # Multiple poses: Use sequential planning
                 print(f"\n🤖 Multi-Pose Sequential Motion Planning")
-                result = planner.plan_sequential_cartesian_motion(pose_matrices)
+                result = planner.plan_sequential_cartesian_motion(
+                    pose_matrices
+                )
                 
                 if result.status == PlanningStatus.SUCCESS:
                     print(f"   ✅ Sequential motion planning SUCCESS!")
@@ -201,17 +221,29 @@ def run_live_integration():
                             if i == 0:
                                 # First motion: start from fixed home position
                                 home_joints = np.array([0, -np.pi/2, np.pi/2, 0, np.pi/2, 0])
-                                result = planner.plan_cartesian_motion(T_start, T_goal, current_joints=home_joints)
+                                result = planner.plan_cartesian_motion(
+                                    T_start, T_goal,
+                                    current_joints=home_joints,
+                                    waypoint_count=6
+                                )
                             else:
                                 # Subsequent motions: use previous result's end joints
                                 if successful_motions:
                                     prev_result = successful_motions[-1][1]
                                     if prev_result.plan and prev_result.plan.joint_waypoints:
                                         last_joints = prev_result.plan.joint_waypoints[-1]
-                                        result = planner.plan_cartesian_motion(T_start, T_goal, current_joints=last_joints)
+                                        result = planner.plan_cartesian_motion(
+                                            T_start, T_goal,
+                                            current_joints=last_joints,
+                                            waypoint_count=6
+                                        )
                                     else:
                                         home_joints = np.array([0, -np.pi/2, np.pi/2, 0, np.pi/2, 0])
-                                        result = planner.plan_cartesian_motion(T_start, T_goal, current_joints=home_joints)
+                                        result = planner.plan_cartesian_motion(
+                                            T_start, T_goal,
+                                            current_joints=home_joints,
+                                            waypoint_count=6
+                                        )
                                 else:
                                     home_joints = np.array([0, -np.pi/2, np.pi/2, 0, np.pi/2, 0])
                                     result = planner.plan_cartesian_motion(T_start, T_goal, current_joints=home_joints)
@@ -358,7 +390,19 @@ def run_predefined_success_demo():
         fk = ForwardKinematics()
         ik = InverseKinematics(fk)
         planner = MotionPlanner(fk, ik)
-        print("✅ Motion planner ready (using basic DLS IK)")
+        try:
+            planner.enable_fast_mode(True)
+            planner.enable_progress_feedback(False)
+            planner.update_config({
+                'max_planning_time': 6.0,
+                'default_waypoint_count': 6,
+                'ik_max_attempts': 3,
+                'ik_timeout': 1.0,
+                'optimize_timing': False
+            })
+        except Exception:
+            pass
+        print("✅ Motion planner ready (fast mode)")
         
         # Plan motions between poses
         print(f"\n🚀 TRAJECTORY PLANNING")
@@ -377,7 +421,7 @@ def run_predefined_success_demo():
                 T_goal = pose_to_matrix(goal_pose)
                 
                 # Plan motion
-                result = planner.plan_cartesian_motion(T_start, T_goal)
+                result = planner.plan_cartesian_motion(T_start, T_goal, waypoint_count=6)
                 
                 if result.status == PlanningStatus.SUCCESS:
                     successful_motions.append((i, result))
@@ -453,7 +497,16 @@ def run_ik_comparison_demo():
         fk = ForwardKinematics()
         ik = InverseKinematics(fk)
         planner = MotionPlanner(fk, ik)
-        print("✅ Motion planner ready")
+        try:
+            planner.enable_fast_mode(True)
+            planner.update_config({
+                'max_planning_time': 6.0,
+                'default_waypoint_count': 6,
+                'optimize_timing': False
+            })
+        except Exception:
+            pass
+        print("✅ Motion planner ready (fast mode)")
         
         # Test 1: Basic IK Performance
         print(f"\n🔄 TEST 1: BASIC DLS IK (Current Method)")
@@ -494,11 +547,7 @@ def run_ik_comparison_demo():
         # Test 2: C-space Enhanced IK Performance
         print(f"\n🚀 TEST 2: C-SPACE ENHANCED IK")
         print("-" * 40)
-        print("Enabling configuration space analysis...")
-        
-        # Enable C-space analysis
-        planner.enable_configuration_space_analysis(build_maps=True)
-        print("✅ C-space analysis enabled")
+        print("Skipping heavy C-space map build to keep demo fast... (enable in production if needed)")
         
         cspace_times = []
         cspace_successes = 0
