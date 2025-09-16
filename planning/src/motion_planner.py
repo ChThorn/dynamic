@@ -10,9 +10,9 @@ Author: Robot Control Team
 
 import numpy as np
 import logging
-import pickle
 import time
 import os
+import threading
 from typing import List, Tuple, Dict, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
@@ -148,8 +148,13 @@ class MotionPlanner:
         
         # Progress callback
         self.progress_callback = None
+        
+        # Thread safety
+        self._planning_lock = threading.RLock()
+        self._stats_lock = threading.RLock()
+        self._config_lock = threading.RLock()
     
-        logger.info("Motion planner initialized")
+        logger.info("Motion planner initialized with thread safety")
     
     def enable_configuration_space_analysis(self, build_maps=False):
         """Enable C-space analysis for better IK performance."""
@@ -196,7 +201,7 @@ class MotionPlanner:
                    waypoint_count: Optional[int] = None,
                    **kwargs) -> MotionPlanningResult:
         """
-        Plan motion between joint configurations.
+        Plan motion between joint configurations. Thread-safe.
         
         Args:
             start_config: Starting joint configuration
@@ -208,77 +213,87 @@ class MotionPlanner:
         Returns:
             MotionPlanningResult with planned motion
         """
-        start_time = time.time()
-        self.stats['total_plans'] += 1
+        with self._planning_lock:
+            start_time = time.time()
+            with self._stats_lock:
+                self.stats['total_plans'] += 1
         
-        # Set default parameters
-        strategy = strategy or self.config['default_strategy']
-        waypoint_count = waypoint_count or self.config['default_waypoint_count']
+            # Set default parameters
+            with self._config_lock:
+                strategy = strategy or self.config['default_strategy']
+                waypoint_count = waypoint_count or self.config['default_waypoint_count']
         
-        try:
-            # Validate inputs
-            if self.progress_callback and self.config['progress_feedback']:
-                self.progress_callback(10.0, "Validating configuration constraints")
+            try:
+                # Validate inputs
+                with self._config_lock:
+                    progress_enabled = self.config['progress_feedback']
+                    
+                if self.progress_callback and progress_enabled:
+                    self.progress_callback(10.0, "Validating configuration constraints")
             
-            validation_result = self._validate_planning_inputs(start_config, goal_config)
-            if not validation_result['valid']:
+                validation_result = self._validate_planning_inputs(start_config, goal_config)
+                if not validation_result['valid']:
+                    return MotionPlanningResult(
+                        status=PlanningStatus.CONSTRAINT_VIOLATION,
+                        error_message=validation_result['error'],
+                        planning_time=time.time() - start_time
+                    )
+            
+                # Attempt planning with primary strategy
+                if self.progress_callback and progress_enabled:
+                    self.progress_callback(30.0, f"Planning motion using {strategy.value} strategy")
+            
+                result = self._attempt_planning(
+                    start_config, goal_config, strategy, waypoint_count, **kwargs
+                )
+            
+                # Try fallback strategies if primary failed
+                with self._config_lock:
+                    enable_fallbacks = self.config['enable_fallbacks']
+                    max_attempts = self.config['max_attempts']
+                    
+                if (not result.status == PlanningStatus.SUCCESS and 
+                    enable_fallbacks and
+                    result.attempts_made < max_attempts):
+                
+                    if self.progress_callback and progress_enabled:
+                        self.progress_callback(60.0, "Trying fallback strategies")
+                
+                    result = self._try_fallback_strategies(
+                        start_config, goal_config, strategy, waypoint_count, 
+                        result, **kwargs
+                    )
+            
+                # Update statistics
+                if self.progress_callback and progress_enabled:
+                    self.progress_callback(90.0, "Finalizing motion plan")
+                
+                planning_time = time.time() - start_time
+                self._update_statistics(result)
+                result.planning_time = planning_time
+            
+                if result.plan:
+                    result.plan.planning_time = planning_time
+            
+                if self.progress_callback and progress_enabled:
+                    status_msg = "Motion planning completed" if result.status == PlanningStatus.SUCCESS else "Motion planning failed"
+                    self.progress_callback(100.0, status_msg)
+            
+                return result
+                
+            except Exception as e:
+                logger.error(f"Motion planning failed with exception: {e}")
                 return MotionPlanningResult(
-                    status=PlanningStatus.CONSTRAINT_VIOLATION,
-                    error_message=validation_result['error'],
+                    status=PlanningStatus.FAILED,
+                    error_message=f"Planning exception: {str(e)}",
                     planning_time=time.time() - start_time
                 )
-            
-            # Attempt planning with primary strategy
-            if self.progress_callback and self.config['progress_feedback']:
-                self.progress_callback(30.0, f"Planning motion using {strategy.value} strategy")
-            
-            result = self._attempt_planning(
-                start_config, goal_config, strategy, waypoint_count, **kwargs
-            )
-            
-            # Try fallback strategies if primary failed
-            if (not result.status == PlanningStatus.SUCCESS and 
-                self.config['enable_fallbacks'] and
-                result.attempts_made < self.config['max_attempts']):
-                
-                if self.progress_callback and self.config['progress_feedback']:
-                    self.progress_callback(60.0, "Trying fallback strategies")
-                
-                result = self._try_fallback_strategies(
-                    start_config, goal_config, strategy, waypoint_count, 
-                    result, **kwargs
-                )
-            
-            # Update statistics
-            if self.progress_callback and self.config['progress_feedback']:
-                self.progress_callback(90.0, "Finalizing motion plan")
-                
-            planning_time = time.time() - start_time
-            self._update_statistics(result, planning_time)
-            result.planning_time = planning_time
-            
-            if result.plan:
-                result.plan.planning_time = planning_time
-            
-            if self.progress_callback and self.config['progress_feedback']:
-                status_msg = "Motion planning completed" if result.status == PlanningStatus.SUCCESS else "Motion planning failed"
-                self.progress_callback(100.0, status_msg)
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Motion planning failed with exception: {e}")
-            return MotionPlanningResult(
-                status=PlanningStatus.FAILED,
-                error_message=f"Planning exception: {str(e)}",
-                planning_time=time.time() - start_time
-            )
     
     def plan_cartesian_motion(self, start_pose: np.ndarray, goal_pose: np.ndarray,
                             orientation_constraint: bool = True,
                             **kwargs) -> MotionPlanningResult:
         """
-        Plan motion between Cartesian poses.
+        Plan motion between Cartesian poses. Thread-safe.
         
         Args:
             start_pose: Starting 4x4 transformation matrix
@@ -289,50 +304,51 @@ class MotionPlanner:
         Returns:
             MotionPlanningResult with planned motion
         """
-        start_time = time.time()
+        with self._planning_lock:
+            start_time = time.time()
         
-        try:
-            # Convert poses to joint configurations using C-space optimization
-            q_start, start_converged = self.solve_ik_with_cspace(start_pose)
-            if not start_converged:
-                return MotionPlanningResult(
-                    status=PlanningStatus.IK_FAILED,
-                    error_message="Failed to solve IK for start pose",
-                    planning_time=time.time() - start_time
+            try:
+                # Convert poses to joint configurations using C-space optimization
+                q_start, start_converged = self.solve_ik_with_cspace(start_pose)
+                if not start_converged:
+                    return MotionPlanningResult(
+                        status=PlanningStatus.IK_FAILED,
+                        error_message="Failed to solve IK for start pose",
+                        planning_time=time.time() - start_time
+                    )
+            
+                q_goal, goal_converged = self.solve_ik_with_cspace(goal_pose)
+                if not goal_converged:
+                    return MotionPlanningResult(
+                        status=PlanningStatus.IK_FAILED,
+                        error_message="Failed to solve IK for goal pose",
+                        planning_time=time.time() - start_time
+                    )
+            
+                # Plan in joint space between IK solutions
+                result = self.plan_motion(
+                    q_start, q_goal, 
+                    strategy=PlanningStrategy.CARTESIAN_SPACE,
+                    **kwargs
                 )
             
-            q_goal, goal_converged = self.solve_ik_with_cspace(goal_pose)
-            if not goal_converged:
-                return MotionPlanningResult(
-                    status=PlanningStatus.IK_FAILED,
-                    error_message="Failed to solve IK for goal pose",
-                    planning_time=time.time() - start_time
-                )
-            
-            # Plan in joint space between IK solutions
-            result = self.plan_motion(
-                q_start, q_goal, 
-                strategy=PlanningStrategy.CARTESIAN_SPACE,
-                **kwargs
-            )
-            
-            # Add Cartesian waypoints if successful
-            if result.status == PlanningStatus.SUCCESS and result.plan:
-                cartesian_waypoints = []
-                for q in result.plan.joint_waypoints:
-                    T = self.fk.compute_forward_kinematics(q)
-                    cartesian_waypoints.append(T)
+                # Add Cartesian waypoints if successful
+                if result.status == PlanningStatus.SUCCESS and result.plan:
+                    cartesian_waypoints = []
+                    for q in result.plan.joint_waypoints:
+                        T = self.fk.compute_forward_kinematics(q)
+                        cartesian_waypoints.append(T)
                 
-                result.plan.cartesian_waypoints = cartesian_waypoints
+                    result.plan.cartesian_waypoints = cartesian_waypoints
             
-            return result
+                return result
             
-        except Exception as e:
-            return MotionPlanningResult(
-                status=PlanningStatus.FAILED,
-                error_message=f"Cartesian planning failed: {str(e)}",
-                planning_time=time.time() - start_time
-            )
+            except Exception as e:
+                return MotionPlanningResult(
+                    status=PlanningStatus.FAILED,
+                    error_message=f"Cartesian planning failed: {str(e)}",
+                    planning_time=time.time() - start_time
+                )
     
     def plan_waypoint_motion(self, waypoints: List[np.ndarray],
                            strategy: Optional[PlanningStrategy] = None,
@@ -656,12 +672,13 @@ class MotionPlanner:
         previous_result.attempts_made += len(self.config['fallback_strategies'])
         return previous_result
     
-    def _update_statistics(self, result: MotionPlanningResult, planning_time: float):
-        """Update planning statistics."""
-        if result.status == PlanningStatus.SUCCESS:
-            self.stats['successful_plans'] += 1
-        else:
-            self.stats['failed_plans'] += 1
+    def _update_statistics(self, result: MotionPlanningResult):
+        """Update planning statistics. Thread-safe."""
+        with self._stats_lock:
+            if result.status == PlanningStatus.SUCCESS:
+                self.stats['successful_plans'] += 1
+            else:
+                self.stats['failed_plans'] += 1
     
     def solve_constrained_ik(self, target_pose: np.ndarray, 
                            max_attempts: Optional[int] = None,
@@ -786,27 +803,31 @@ class MotionPlanner:
             return False, f"Path validation failed: {str(e)}"
     
     def get_statistics(self) -> Dict[str, Any]:
-        """Get motion planning statistics."""
-        return self.stats.copy()
+        """Get motion planning statistics. Thread-safe."""
+        with self._stats_lock:
+            return self.stats.copy()
     
     def get_collision_info(self) -> Dict[str, Any]:
         """Get collision checker configuration and status."""
         return self.collision_checker.get_collision_summary()
 
     def update_config(self, new_config: Dict[str, Any]):
-        """Update motion planning configuration."""
-        self.config.update(new_config)
+        """Update motion planning configuration. Thread-safe."""
+        with self._config_lock:
+            self.config.update(new_config)
         logger.info("Motion planner configuration updated")
 
     def set_progress_callback(self, callback):
-        """Set progress callback for motion planning operations."""
-        self.progress_callback = callback
-        self.config['progress_feedback'] = True
+        """Set progress callback for motion planning operations. Thread-safe."""
+        with self._config_lock:
+            self.progress_callback = callback
+            self.config['progress_feedback'] = True
         logger.info("Progress feedback enabled")
 
     def enable_progress_feedback(self, enable: bool = True):
-        """Enable or disable progress feedback."""
-        self.config['progress_feedback'] = enable
+        """Enable or disable progress feedback. Thread-safe."""
+        with self._config_lock:
+            self.config['progress_feedback'] = enable
         if enable:
             logger.info("Progress feedback enabled")
         else:
