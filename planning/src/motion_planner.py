@@ -876,7 +876,7 @@ class MotionPlanner:
                            max_attempts: Optional[int] = None,
                            use_different_seeds: bool = True) -> Tuple[Optional[np.ndarray], bool]:
         """
-        Solve IK with constraint validation and intelligent retry.
+        Enhanced IK solver with constraint validation and intelligent retry strategies.
         
         Args:
             target_pose: 4x4 target transformation matrix
@@ -888,42 +888,110 @@ class MotionPlanner:
         """
         max_attempts = max_attempts or self.config['ik_max_attempts']
         
-        # First attempt with C-space optimization
+        # Phase 1: Try with C-space optimization
         q_solution, converged = self.solve_ik_with_cspace(target_pose)
         if converged and self._validate_ik_solution(q_solution, target_pose):
             return q_solution, True
         
+        # Phase 2: Store best solution even if not perfect
+        best_solution = q_solution if converged else None
+        best_error = float('inf')
+        
         if not use_different_seeds or max_attempts <= 1:
-            return None, False
+            return best_solution, converged
             
-        # Try with different initial configurations
+        # Phase 3: Enhanced multi-strategy approach
         joint_limits = self.path_planner.get_joint_limits()
         limits_lower = np.array([joint_limits[f'j{i+1}']['min'] for i in range(6)])
         limits_upper = np.array([joint_limits[f'j{i+1}']['max'] for i in range(6)])
         
+        # Convert degrees to radians for limits
+        limits_lower = np.radians(limits_lower)
+        limits_upper = np.radians(limits_upper)
+        
         for attempt in range(1, max_attempts):
-            # Generate diverse initial configurations
-            if attempt % 3 == 1:
+            # Strategy selection based on attempt number
+            if attempt % 5 == 1:
+                # Random uniform sampling
                 q_init = np.random.uniform(limits_lower, limits_upper)
-            elif attempt % 3 == 2:
+            elif attempt % 5 == 2:
+                # Gaussian around middle with variable spread
                 q_init = (limits_lower + limits_upper) / 2
-                q_init += np.random.normal(0, 0.3, size=q_init.shape)
+                spread = 0.2 + (attempt % 3) * 0.1
+                q_init += np.random.normal(0, spread, size=q_init.shape)
                 q_init = np.clip(q_init, limits_lower, limits_upper)
-            else:
-                q_init = np.random.uniform(limits_lower, limits_upper)
-                if q_solution is not None:
-                    weight = 0.3
-                    q_init = weight * q_solution + (1 - weight) * q_init
+            elif attempt % 5 == 3:
+                # Strategic configurations for RB3-730ES-U
+                strategic_configs = [
+                    np.array([0.0, -0.5, 1.0, 0.0, 0.5, 0.0]),
+                    np.array([1.57, -1.0, 0.5, 0.0, 1.0, 0.0]),
+                    np.array([-1.57, -1.0, 0.5, 0.0, 1.0, 0.0]),
+                    np.array([0.78, -0.78, 0.78, 1.57, 0.0, 0.0])
+                ]
+                config_idx = (attempt // 5) % len(strategic_configs)
+                q_init = strategic_configs[config_idx].copy()
+                # Add small perturbation
+                q_init += np.random.normal(0, 0.1, size=q_init.shape)
+                q_init = np.clip(q_init, limits_lower, limits_upper)
+            elif attempt % 5 == 4:
+                # Perturbation around best solution found so far
+                if best_solution is not None:
+                    perturbation_scale = 0.15 + (attempt % 3) * 0.05
+                    q_init = best_solution + np.random.normal(0, perturbation_scale, best_solution.shape)
                     q_init = np.clip(q_init, limits_lower, limits_upper)
+                else:
+                    q_init = np.random.uniform(limits_lower, limits_upper)
+            else:
+                # Workspace-biased sampling (favor reachable configurations)
+                # Target position-based initial guess
+                target_pos = target_pose[:3, 3]
+                if np.linalg.norm(target_pos) > 0.1:  # Non-origin target
+                    # Simple heuristic for initial shoulder and elbow angles
+                    reach_distance = np.linalg.norm(target_pos[:2])  # XY distance
+                    q_init = np.zeros(6)
+                    q_init[0] = np.arctan2(target_pos[1], target_pos[0])  # Base rotation
+                    q_init[1] = -0.3 - reach_distance * 0.2  # Shoulder
+                    q_init[2] = 0.6 + reach_distance * 0.3   # Elbow
+                    # Add randomization to other joints
+                    q_init[3:] = np.random.uniform(limits_lower[3:], limits_upper[3:])
+                    q_init = np.clip(q_init, limits_lower, limits_upper)
+                else:
+                    q_init = np.random.uniform(limits_lower, limits_upper)
             
-            # Attempt IK with this initial configuration
-            q_candidate, converged = self.ik.solve(target_pose, q_init=q_init)
+            # Enhanced IK parameters for difficult poses
+            ik_params = {
+                'num_attempts': 50 + attempt * 2,  # Increase attempts for later iterations
+                'max_iters': 400 + attempt * 10,   # More iterations for difficult cases
+                'pos_tol': 1e-3 if attempt < 5 else 1.5e-3,  # Relax tolerance gradually
+                'rot_tol': 2e-3 if attempt < 5 else 3e-3
+            }
             
-            if converged and self._validate_ik_solution(q_candidate, target_pose):
-                return q_candidate, True
+            # Attempt IK with enhanced parameters
+            q_candidate, converged = self.ik.solve(target_pose, q_init=q_init, **ik_params)
             
-            if converged and q_solution is None:
-                q_solution = q_candidate
+            if q_candidate is not None:
+                # Evaluate solution quality even if not fully converged
+                error = self._compute_solution_error(q_candidate, target_pose)
+                
+                if converged and self._validate_ik_solution(q_candidate, target_pose):
+                    return q_candidate, True
+                
+                # Track best solution
+                if error < best_error:
+                    best_error = error
+                    best_solution = q_candidate
+                    
+                # Accept "good enough" solutions for complex poses
+                if error < self.config.get('ik_relaxed_tolerance', 2e-3):
+                    # Additional validation for relaxed solutions
+                    if self._validate_ik_solution_relaxed(q_candidate, target_pose):
+                        logger.debug(f"Accepted relaxed IK solution on attempt {attempt}")
+                        return q_candidate, True
+        
+        # Return best solution found, even if not perfect
+        if best_solution is not None and best_error < 5e-3:  # 5mm tolerance
+            logger.debug(f"Returning best IK solution with error {best_error:.6f}")
+            return best_solution, False
         
         return None, False
     
@@ -965,6 +1033,68 @@ class MotionPlanner:
         except Exception as e:
             logger.error(f"IK solution validation failed: {e}")
             return False
+    
+    def _validate_ik_solution_relaxed(self, q_solution: np.ndarray, 
+                                    target_pose: np.ndarray) -> bool:
+        """Relaxed validation for complex poses that are close enough."""
+        try:
+            # More permissive accuracy checks
+            T_achieved = self.fk.compute_forward_kinematics(q_solution)
+            tcp_position = T_achieved[:3, 3]
+            
+            # Relaxed position error check (2x normal tolerance)
+            pos_error = np.linalg.norm(tcp_position - target_pose[:3, 3])
+            if pos_error > self.config['ik_position_tolerance'] * 2:
+                return False
+            
+            # Relaxed orientation error check (2x normal tolerance)
+            R_desired = target_pose[:3, :3]
+            R_achieved = T_achieved[:3, :3]
+            
+            cos_angle = (np.trace(R_desired.T @ R_achieved) - 1) / 2
+            cos_angle = np.clip(cos_angle, -1, 1)
+            rot_error = np.arccos(cos_angle)
+            
+            rot_tolerance = np.radians(self.config['ik_rotation_tolerance'] * 2)
+            if rot_error > rot_tolerance:
+                return False
+            
+            # Still require collision-free
+            collision_result = self.collision_checker.check_configuration_collision(
+                q_solution, tcp_position, self.fk.compute_forward_kinematics
+            )
+            
+            if collision_result.is_collision:
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Relaxed IK solution validation failed: {e}")
+            return False
+    
+    def _compute_solution_error(self, q_solution: np.ndarray, 
+                              target_pose: np.ndarray) -> float:
+        """Compute combined error metric for IK solution quality assessment."""
+        try:
+            T_achieved = self.fk.compute_forward_kinematics(q_solution)
+            
+            # Position error
+            pos_error = np.linalg.norm(T_achieved[:3, 3] - target_pose[:3, 3])
+            
+            # Orientation error
+            R_desired = target_pose[:3, :3]
+            R_achieved = T_achieved[:3, :3]
+            cos_angle = (np.trace(R_desired.T @ R_achieved) - 1) / 2
+            cos_angle = np.clip(cos_angle, -1, 1)
+            rot_error = np.arccos(cos_angle)
+            
+            # Combined error with position weighted more heavily
+            return pos_error + rot_error * 0.1
+            
+        except Exception as e:
+            logger.error(f"Error computation failed: {e}")
+            return float('inf')
     
     def validate_motion_path(self, joint_path: List[np.ndarray]) -> Tuple[bool, str]:
         """Validate entire motion path for collisions."""

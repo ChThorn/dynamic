@@ -190,15 +190,16 @@ class CleanRobotMotionPlanner:
             current_pose = self.get_current_pose_from_joints(current_joints_deg)
             T_current = current_pose.to_transformation_matrix()
             
-            # Convert target pose to joint configuration using IK
-            q_target, ik_success = self.ik.solve(T_target)
+            # Convert target pose to joint configuration using enhanced IK
+            q_current = np.deg2rad(current_joints_deg)
+            q_target, ik_success = self.motion_planner.solve_constrained_ik(T_target)
             if not ik_success:
                 return RobotMotionPlan(
                     waypoints=[], 
                     execution_time_sec=0.0,
                     planning_time_ms=0.0,
                     success=False, 
-                    error_message="IK failed for target pose"
+                    error_message="Enhanced IK failed for target pose"
                 )
             
             # Get current joint configuration

@@ -179,14 +179,26 @@ class AdvancedPoseVisualizer:
                 'z_max': workspace.get('z_max', 1.1) - margin_z,
             }
             
+            # Add reachability constraints based on URDF robot model (RB3-730ES-U)
+            # From URDF: base=145.3mm, shoulder-elbow=286mm, elbow-wrist=344mm, wrist-tcp=100mm
+            # Maximum theoretical reach: 286+344+100 = 730mm (matches model name)
+            # Practical reach considering joint limits and singularities
+            # Updated to use workspace constraints for consistency
+            workspace_radius_m = min(abs(self.workspace_limits['x_max']), abs(self.workspace_limits['y_max']))
+            
+            self.reachability_limits = {
+                'max_radius_mm': workspace_radius_m * 1000,      # Use workspace limit (720mm)
+                'warning_radius_mm': workspace_radius_m * 1000 * 0.9,  # 90% of workspace (648mm)
+                'safe_radius_mm': workspace_radius_m * 1000 * 0.8,     # 80% of workspace (576mm)
+            }
+            
             # Get robot info
             robot_info = constraints_data.get('robot_info', {})
             self.robot_model = robot_info.get('model', 'RB3-730ES-U')
             
             logger.info(f"Loaded workspace constraints for {self.robot_model}")
-            logger.info(f"Workspace: X[{self.workspace_limits['x_min']:.3f}, {self.workspace_limits['x_max']:.3f}], "
-                       f"Y[{self.workspace_limits['y_min']:.3f}, {self.workspace_limits['y_max']:.3f}], "
-                       f"Z[{self.workspace_limits['z_min']:.3f}, {self.workspace_limits['z_max']:.3f}]")
+            logger.info(f"Workspace: X[{self.workspace_limits['x_min']:.3f}, {self.workspace_limits['x_max']:.3f}], Y[{self.workspace_limits['y_min']:.3f}, {self.workspace_limits['y_max']:.3f}], Z[{self.workspace_limits['z_min']:.3f}, {self.workspace_limits['z_max']:.3f}]")
+            logger.info(f"Reachability: Safe≤{self.reachability_limits['safe_radius_mm']}mm, Warning≤{self.reachability_limits['warning_radius_mm']}mm, Max≤{self.reachability_limits['max_radius_mm']}mm")
             
             if margin_enabled:
                 logger.info(f"Safety margins applied: X±{margin_x}m, Y±{margin_y}m, Z±{margin_z}m")
@@ -199,6 +211,12 @@ class AdvancedPoseVisualizer:
                 'x_min': 0.2, 'x_max': 0.5,
                 'y_min': -0.3, 'y_max': 0.3,
                 'z_min': 0.2, 'z_max': 0.4,
+            }
+            # Default reachability limits based on URDF (conservative defaults)
+            self.reachability_limits = {
+                'max_radius_mm': 600.0,  # Conservative for unknown robot
+                'warning_radius_mm': 500.0,
+                'safe_radius_mm': 400.0,
             }
             self.robot_model = 'RB3-730ES-U'
 
@@ -218,6 +236,7 @@ class AdvancedPoseVisualizer:
         self.ax_xy.set_xlabel("X (m)"); self.ax_xy.set_ylabel("Y (m)")
         self.ax_xy.set_xlim(x_lim); self.ax_xy.set_ylim(y_lim); self.ax_xy.grid(True)
         self.ax_xy.set_aspect('equal', adjustable='box')
+        self._add_reachable_zones_2d()
 
         self.ax_yz.set_title("2. Click/Drag to set Pick/Place Y-Z Height")
         self.ax_yz.set_xlabel("Y (m)"); self.ax_yz.set_ylabel("Z (m)")
@@ -297,9 +316,10 @@ class AdvancedPoseVisualizer:
         if all(c is not None for c in self.coords.values()):
             x, y, z = self.coords['x'], self.coords['y'], self.coords['z']
             
-            # Check if position is outside workspace
-            if not self.validate_workspace_position(x, y, z):
-                # Show warning and clamp to workspace
+            # Check if position is outside workspace or unreachable
+            validation = self.validate_position_complete(x, y, z)
+            if not validation['overall_valid']:
+                # Show warning and clamp to workspace/reachability constraints
                 self.show_workspace_warning(x, y, z)
                 x_clamped, y_clamped, z_clamped = self.clamp_to_workspace(x, y, z)
                 self.coords['x'], self.coords['y'], self.coords['z'] = x_clamped, y_clamped, z_clamped
@@ -434,12 +454,13 @@ class AdvancedPoseVisualizer:
                 old_coords = self.coords.copy()
                 self.coords[updated_key] = value
                 
-                # Validate workspace if all coordinates are available
+                # Validate workspace and reachability if all coordinates are available
                 if all(c is not None for c in self.coords.values()):
                     x, y, z = self.coords['x'], self.coords['y'], self.coords['z']
                     
-                    if not self.validate_workspace_position(x, y, z):
-                        # Show warning and clamp to workspace
+                    validation = self.validate_position_complete(x, y, z)
+                    if not validation['overall_valid']:
+                        # Show warning and clamp to workspace/reachability constraints
                         self.show_workspace_warning(x, y, z)
                         x_clamped, y_clamped, z_clamped = self.clamp_to_workspace(x, y, z)
                         self.coords['x'], self.coords['y'], self.coords['z'] = x_clamped, y_clamped, z_clamped
@@ -481,28 +502,86 @@ class AdvancedPoseVisualizer:
         z_valid = self.workspace_limits['z_min'] <= z <= self.workspace_limits['z_max']
         return x_valid and y_valid and z_valid
     
+    def validate_reachability(self, x, y, z):
+        """Validate if position is reachable by robot arm."""
+        # Convert to mm and calculate distance from robot base
+        distance_mm = np.sqrt((x * 1000)**2 + (y * 1000)**2)
+        
+        # Check against reachability limits
+        is_reachable = distance_mm <= self.reachability_limits['max_radius_mm']
+        is_safe = distance_mm <= self.reachability_limits['safe_radius_mm']
+        is_warning = distance_mm <= self.reachability_limits['warning_radius_mm']
+        
+        return {
+            'reachable': is_reachable,
+            'safe': is_safe,
+            'warning_zone': not is_warning and is_reachable,
+            'distance_mm': distance_mm
+        }
+    
+    def validate_position_complete(self, x, y, z):
+        """Complete validation including workspace and reachability."""
+        workspace_valid = self.validate_workspace_position(x, y, z)
+        reachability_info = self.validate_reachability(x, y, z)
+        
+        return {
+            'workspace_valid': workspace_valid,
+            'reachable': reachability_info['reachable'],
+            'safe': reachability_info['safe'],
+            'warning_zone': reachability_info['warning_zone'],
+            'distance_mm': reachability_info['distance_mm'],
+            'overall_valid': workspace_valid and reachability_info['reachable']
+        }
+    
     def clamp_to_workspace(self, x, y, z):
-        """Clamp coordinates to workspace limits."""
+        """Clamp coordinates to workspace limits and reachability constraints."""
+        # First clamp to workspace bounds
         x_clamped = np.clip(x, self.workspace_limits['x_min'], self.workspace_limits['x_max'])
         y_clamped = np.clip(y, self.workspace_limits['y_min'], self.workspace_limits['y_max'])
         z_clamped = np.clip(z, self.workspace_limits['z_min'], self.workspace_limits['z_max'])
+        
+        # Then check reachability and clamp if needed
+        distance_mm = np.sqrt((x_clamped * 1000)**2 + (y_clamped * 1000)**2)
+        if distance_mm > self.reachability_limits['max_radius_mm']:
+            # Scale down to maximum reachable radius
+            scale_factor = self.reachability_limits['max_radius_mm'] / distance_mm
+            x_clamped *= scale_factor
+            y_clamped *= scale_factor
+            
         return x_clamped, y_clamped, z_clamped
     
     def show_workspace_warning(self, x, y, z):
-        """Show warning when attempting to set position outside workspace."""
+        """Show warning when attempting to set position outside workspace or reachability."""
+        validation = self.validate_position_complete(x, y, z)
+        
         violations = []
-        if x < self.workspace_limits['x_min'] or x > self.workspace_limits['x_max']:
-            violations.append(f"X: {x:.3f}m (limits: {self.workspace_limits['x_min']:.3f} to {self.workspace_limits['x_max']:.3f}m)")
-        if y < self.workspace_limits['y_min'] or y > self.workspace_limits['y_max']:
-            violations.append(f"Y: {y:.3f}m (limits: {self.workspace_limits['y_min']:.3f} to {self.workspace_limits['y_max']:.3f}m)")
-        if z < self.workspace_limits['z_min'] or z > self.workspace_limits['z_max']:
-            violations.append(f"Z: {z:.3f}m (limits: {self.workspace_limits['z_min']:.3f} to {self.workspace_limits['z_max']:.3f}m)")
+        
+        # Check workspace violations
+        if not validation['workspace_valid']:
+            if x < self.workspace_limits['x_min'] or x > self.workspace_limits['x_max']:
+                violations.append(f"X: {x:.3f}m (limits: {self.workspace_limits['x_min']:.3f} to {self.workspace_limits['x_max']:.3f}m)")
+            if y < self.workspace_limits['y_min'] or y > self.workspace_limits['y_max']:
+                violations.append(f"Y: {y:.3f}m (limits: {self.workspace_limits['y_min']:.3f} to {self.workspace_limits['y_max']:.3f}m)")
+            if z < self.workspace_limits['z_min'] or z > self.workspace_limits['z_max']:
+                violations.append(f"Z: {z:.3f}m (limits: {self.workspace_limits['z_min']:.3f} to {self.workspace_limits['z_max']:.3f}m)")
+        
+        # Check reachability violations
+        if not validation['reachable']:
+            violations.append(f"Distance: {validation['distance_mm']:.1f}mm (max reachable: {self.reachability_limits['max_radius_mm']:.1f}mm)")
+        elif validation['warning_zone']:
+            violations.append(f"Warning: {validation['distance_mm']:.1f}mm from base (recommended ≤{self.reachability_limits['warning_radius_mm']:.1f}mm)")
         
         if violations:
-            warning_msg = f"⚠️ Position clamped to workspace limits:\n" + "\n".join(violations)
+            warning_msg = f"⚠️ Position adjusted for robot constraints:\n" + "\n".join(violations)
             logger.warning(warning_msg)
-            # Update plot title to show warning temporarily
-            self.ax_3d.set_title(f"⚠️ Position constrained to {self.robot_model} workspace")
+            
+            # Update plot title based on constraint type
+            if not validation['reachable']:
+                self.ax_3d.set_title(f"⚠️ Position limited to {self.robot_model} reachable zone")
+            elif validation['warning_zone']:
+                self.ax_3d.set_title(f"⚠️ Position in {self.robot_model} warning zone - use caution")
+            else:
+                self.ax_3d.set_title(f"⚠️ Position constrained to {self.robot_model} workspace")
             plt.pause(0.1)  # Brief pause to show warning
 
     def _draw_coordinate_frame(self, T, name, colors):
@@ -521,7 +600,7 @@ class AdvancedPoseVisualizer:
         self._draw_coordinate_frame(T_tcp, f"Grip{pose_number}", ['magenta', 'cyan', 'yellow'])
 
     def _draw_workspace_boundary(self):
-        """Draw workspace boundary box using robot workspace constraints."""
+        """Draw workspace boundary box and reachable zone indicators using robot workspace constraints."""
         # Use actual workspace limits instead of axis limits
         x_lim = (self.workspace_limits['x_min'], self.workspace_limits['x_max'])
         y_lim = (self.workspace_limits['y_min'], self.workspace_limits['y_max'])
@@ -559,6 +638,94 @@ class AdvancedPoseVisualizer:
         self.ax_3d.text(center_x, center_y, center_z + 0.05, 
                        f"{self.robot_model}\nWorkspace", fontsize=9, ha='center', 
                        bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.7))
+        
+        # Draw reachable zone indicators
+        self._draw_reachable_zones()
+    
+    def _draw_reachable_zones(self):
+        """Draw circular indicators showing robot reachable zones in XY plane."""
+        # Draw zones at the middle Z height for visibility
+        z_mid = (self.workspace_limits['z_min'] + self.workspace_limits['z_max']) / 2
+        
+        # Convert radius from mm to meters for plotting
+        max_radius = self.reachability_limits['max_radius_mm'] / 1000.0
+        warning_radius = self.reachability_limits['warning_radius_mm'] / 1000.0
+        safe_radius = self.reachability_limits['safe_radius_mm'] / 1000.0
+        
+        # Create circle points
+        theta = np.linspace(0, 2*np.pi, 100)
+        
+        # Draw safe zone (green)
+        x_safe = safe_radius * np.cos(theta)
+        y_safe = safe_radius * np.sin(theta)
+        z_safe = np.full_like(x_safe, z_mid)
+        self.ax_3d.plot(x_safe, y_safe, z_safe, 'g-', alpha=0.7, linewidth=2, 
+                       label=f'Safe Zone (≤{self.reachability_limits["safe_radius_mm"]:.0f}mm)')
+        
+        # Draw warning zone (yellow)
+        x_warning = warning_radius * np.cos(theta)
+        y_warning = warning_radius * np.sin(theta)
+        z_warning = np.full_like(x_warning, z_mid)
+        self.ax_3d.plot(x_warning, y_warning, z_warning, 'y-', alpha=0.7, linewidth=2,
+                       label=f'Warning Zone (≤{self.reachability_limits["warning_radius_mm"]:.0f}mm)')
+        
+        # Draw maximum reachable zone (red)
+        x_max = max_radius * np.cos(theta)
+        y_max = max_radius * np.sin(theta)
+        z_max = np.full_like(x_max, z_mid)
+        self.ax_3d.plot(x_max, y_max, z_max, 'r-', alpha=0.7, linewidth=2,
+                       label=f'Max Reach (≤{self.reachability_limits["max_radius_mm"]:.0f}mm)')
+        
+        # Add zone legend and annotations
+        self.ax_3d.text(0, safe_radius + 0.05, z_mid, 'SAFE', fontsize=8, ha='center', 
+                       color='green', weight='bold')
+        self.ax_3d.text(0, warning_radius + 0.05, z_mid, 'CAUTION', fontsize=8, ha='center', 
+                       color='orange', weight='bold')
+        self.ax_3d.text(0, max_radius + 0.05, z_mid, 'MAX', fontsize=8, ha='center', 
+                       color='red', weight='bold')
+        
+        # Add robot base marker at origin
+        self.ax_3d.scatter([0], [0], [z_mid], c='black', s=100, marker='s', 
+                          label='Robot Base', alpha=0.8)
+    
+    def _add_reachable_zones_2d(self):
+        """Add reachable zone circles to the XY 2D plot."""
+        # Convert radius from mm to meters for plotting
+        max_radius = self.reachability_limits['max_radius_mm'] / 1000.0
+        warning_radius = self.reachability_limits['warning_radius_mm'] / 1000.0
+        safe_radius = self.reachability_limits['safe_radius_mm'] / 1000.0
+        
+        # Create circle points
+        theta = np.linspace(0, 2*np.pi, 100)
+        
+        # Draw circles on XY plot
+        # Safe zone (green)
+        x_safe = safe_radius * np.cos(theta)
+        y_safe = safe_radius * np.sin(theta)
+        self.ax_xy.plot(x_safe, y_safe, 'g-', alpha=0.5, linewidth=1.5)
+        self.ax_xy.fill(x_safe, y_safe, color='green', alpha=0.1)
+        
+        # Warning zone (yellow)
+        x_warning = warning_radius * np.cos(theta)
+        y_warning = warning_radius * np.sin(theta)
+        self.ax_xy.plot(x_warning, y_warning, 'y-', alpha=0.5, linewidth=1.5)
+        self.ax_xy.fill(x_warning, y_warning, color='yellow', alpha=0.1)
+        
+        # Maximum reachable zone (red)
+        x_max = max_radius * np.cos(theta)
+        y_max = max_radius * np.sin(theta)
+        self.ax_xy.plot(x_max, y_max, 'r-', alpha=0.5, linewidth=1.5)
+        
+        # Add robot base marker at origin
+        self.ax_xy.scatter([0], [0], c='black', s=80, marker='s', alpha=0.8, zorder=10)
+        
+        # Add zone labels
+        self.ax_xy.text(0, safe_radius - 0.05, 'SAFE', fontsize=7, ha='center', 
+                       color='green', weight='bold', alpha=0.8)
+        self.ax_xy.text(0, warning_radius - 0.05, 'CAUTION', fontsize=7, ha='center', 
+                       color='orange', weight='bold', alpha=0.8)
+        self.ax_xy.text(0, max_radius - 0.05, 'MAX', fontsize=7, ha='center', 
+                       color='red', weight='bold', alpha=0.8)
     
     def calculate_tcp_orientation(self):
         if self.orientation_mode == "view_aligned":

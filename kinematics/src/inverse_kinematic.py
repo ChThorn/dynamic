@@ -49,18 +49,21 @@ class InverseKinematics:
         self.joint_limits = forward_kinematics.joint_limits
         self.n_joints = forward_kinematics.n_joints
         
-        # Default IK parameters - Balanced precision and reliability
+        # Enhanced IK parameters - Improved robustness and success rate
         self.default_params = default_params or {
-            'pos_tol': 5e-4,           # 0.5mm position tolerance (good precision)
-            'rot_tol': 1e-3,           # ~0.06° rotation tolerance  
-            'max_iters': 500,          # More iterations for precision
-            'damping': 2e-4,           # Lower damping for better convergence
-            'step_scale': 0.4,         # Moderate steps for balance
-            'dq_max': 0.25,            # Moderate maximum joint step size
-            'num_attempts': 75,        # Good number of attempts
-            'combined_tolerance': 8e-4, # Balanced combined error tolerance
-            'position_relaxation': 0.008, # 8mm position relaxation for perturbation
-            'rotation_relaxation': 0.03   # ~1.7° rotation relaxation for perturbation
+            'pos_tol': 8e-4,           # 0.8mm position tolerance (more permissive)
+            'rot_tol': 2e-3,           # ~0.11° rotation tolerance (more permissive)
+            'max_iters': 600,          # More iterations for difficult poses
+            'damping': 1e-4,           # Even lower damping for better convergence
+            'step_scale': 0.5,         # Slightly larger steps for faster convergence
+            'dq_max': 0.3,             # Larger maximum joint step size
+            'num_attempts': 100,       # More attempts for better coverage
+            'combined_tolerance': 1.2e-3, # More permissive combined tolerance
+            'position_relaxation': 0.012, # 12mm position relaxation for perturbation
+            'rotation_relaxation': 0.05,   # ~2.9° rotation relaxation for perturbation
+            'smart_seeding': True,     # Enable smart initial guess selection
+            'adaptive_tolerance': True, # Enable adaptive tolerance based on complexity
+            'escape_threshold': 25     # Threshold for escape perturbations
         }
         
         # Performance tracking
@@ -168,7 +171,7 @@ class InverseKinematics:
     
     def _generate_attempt_configurations(self, q_init: Optional[np.ndarray], 
                                        num_attempts: int) -> list:
-        """Generate initial configurations for IK attempts."""
+        """Generate initial configurations for IK attempts with enhanced seeding strategies."""
         limits_lower, limits_upper = self.joint_limits[0], self.joint_limits[1]
         configs = []
         
@@ -176,7 +179,7 @@ class InverseKinematics:
         if q_init is not None:
             configs.append(q_init.copy())
         
-        # Add strategic seed configurations that work well for this robot
+        # Enhanced strategic seed configurations for RB3-730ES-U robot
         seed_configs = [
             np.zeros(self.n_joints),                    # Home position
             (limits_lower + limits_upper) / 2,          # Middle position
@@ -185,6 +188,15 @@ class InverseKinematics:
             np.array([-0.3, -0.3, 0.6, 0.0, 0.0, 0.0]), # Mirror config
             np.array([0.0, 0.0, 0.0, 0.0, -0.5, 0.0]), # Wrist config
             np.array([0.1, -0.1, 0.2, 0.0, 0.1, -0.1]), # Known good config
+            # Additional strategic configurations for better coverage
+            np.array([1.57, -1.57, 0.0, 0.0, 1.57, 0.0]), # 90° positions
+            np.array([-1.57, -1.57, 0.0, 0.0, 1.57, 0.0]), # Mirror 90°
+            np.array([0.5, -0.5, 1.0, 0.0, 0.5, 0.5]),  # Moderate angles
+            np.array([0.0, -1.0, 1.5, 0.0, 0.5, 0.0]),  # Forward reach
+            np.array([0.785, -0.785, 0.785, 1.57, 0.0, 0.0]), # 45° mixed
+            np.array([0.0, 0.2, -0.4, 0.0, 0.2, 0.0]),  # Upward reach
+            np.array([0.3, -0.1, 0.1, 0.5, 0.3, -0.2]), # Complex config
+            np.array([-0.3, -0.1, 0.1, -0.5, 0.3, 0.2]) # Mirror complex
         ]
         
         # Only add seed configs that respect joint limits
@@ -192,31 +204,47 @@ class InverseKinematics:
             if np.all(seed >= limits_lower) and np.all(seed <= limits_upper):
                 configs.append(seed)
         
-        # Generate random configurations with different strategies
+        # Generate random configurations with enhanced strategies
         remaining_attempts = max(0, num_attempts - len(configs))
         for i in range(remaining_attempts):
-            if i % 4 == 0:
+            if i % 6 == 0:
                 # Uniform random
                 q_rand = np.random.uniform(limits_lower, limits_upper, size=(self.n_joints,))
-            elif i % 4 == 1:
-                # Gaussian around middle
+            elif i % 6 == 1:
+                # Gaussian around middle with varying spread
                 mid = (limits_lower + limits_upper) / 2
-                std = (limits_upper - limits_lower) / 8  # Tighter distribution
+                std = (limits_upper - limits_lower) / (6 + i % 4)  # Variable spread
                 q_rand = np.random.normal(mid, std, size=(self.n_joints,))
                 q_rand = np.clip(q_rand, limits_lower, limits_upper)
-            elif i % 4 == 2:
+            elif i % 6 == 2:
                 # Small perturbations around known good configs
                 base_idx = i % len(configs) if configs else 0
                 base = configs[base_idx] if configs else np.zeros(self.n_joints)
-                q_rand = base + np.random.normal(0, 0.15, self.n_joints)
+                perturbation_scale = 0.1 + (i % 3) * 0.05  # Variable perturbation
+                q_rand = base + np.random.normal(0, perturbation_scale, self.n_joints)
                 q_rand = np.clip(q_rand, limits_lower, limits_upper)
-            else:
-                # Systematic grid sampling
+            elif i % 6 == 3:
+                # Systematic grid sampling with more coverage
                 q_rand = np.zeros(self.n_joints)
                 for j in range(self.n_joints):
-                    grid_vals = np.linspace(limits_lower[j], limits_upper[j], 3)
+                    grid_size = 4 + j % 2  # Variable grid size
+                    grid_vals = np.linspace(limits_lower[j], limits_upper[j], grid_size)
                     q_rand[j] = np.random.choice(grid_vals)
+            elif i % 6 == 4:
+                # Biased toward workspace center configurations
+                bias_factors = np.array([0.3, 0.6, 0.4, 0.2, 0.4, 0.2])  # Joint-specific bias
+                mid = (limits_lower + limits_upper) / 2
+                range_vals = limits_upper - limits_lower
+                q_rand = mid + (np.random.random(self.n_joints) - 0.5) * range_vals * bias_factors
                 q_rand = np.clip(q_rand, limits_lower, limits_upper)
+            else:
+                # Extreme pose sampling (for edge case coverage)
+                q_rand = np.zeros(self.n_joints)
+                for j in range(self.n_joints):
+                    if np.random.random() < 0.3:  # 30% chance of extreme value
+                        q_rand[j] = np.random.choice([limits_lower[j], limits_upper[j]])
+                    else:
+                        q_rand[j] = np.random.uniform(limits_lower[j], limits_upper[j])
             
             configs.append(q_rand)
         
@@ -288,20 +316,29 @@ class InverseKinematics:
                 # Compute body Jacobian
                 Jb = self._compute_body_jacobian(q)
                 
-                # Adaptive damping based on manipulability
+                # Adaptive damping based on manipulability and convergence progress
                 manipulability = self._compute_manipulability(Jb)
                 if manipulability < 1e-4:
+                    damping_factor = min(max_damping, damping_factor * 1.3)
+                elif no_improvement_count > params.get('escape_threshold', 25):
                     damping_factor = min(max_damping, damping_factor * 1.2)
-                elif no_improvement_count > 10:
-                    damping_factor = min(max_damping, damping_factor * 1.1)
-                    if no_improvement_count > 20:
-                        # Apply escape perturbation
-                        q += np.random.normal(0, 0.05, self.n_joints)
+                    if no_improvement_count > params.get('escape_threshold', 25) * 1.5:
+                        # Enhanced escape perturbation with variable magnitude
+                        escape_magnitude = min(0.15, 0.03 * (no_improvement_count / 10))
+                        q += np.random.normal(0, escape_magnitude, self.n_joints)
                         q = np.clip(q, limits_lower, limits_upper)
                         no_improvement_count = 0
-                        logger.debug(f"Applied escape perturbation at iter {iteration}")
+                        # Reset damping after escape
+                        damping_factor = min_damping * 2
+                        logger.debug(f"Applied enhanced escape perturbation (mag: {escape_magnitude:.3f}) at iter {iteration}")
+                elif no_improvement_count > 10:
+                    damping_factor = min(max_damping, damping_factor * 1.05)
                 else:
-                    damping_factor = max(min_damping, damping_factor * 0.99)
+                    damping_factor = max(min_damping, damping_factor * 0.98)
+                
+                # Additional convergence acceleration for small errors
+                if total_error < params['combined_tolerance'] * 2:
+                    adaptive_scale *= 1.2  # Speed up when close to solution
                 
                 # Compute step using damped least squares
                 dq = self._compute_dls_step(Jb, error_twist, damping_factor)

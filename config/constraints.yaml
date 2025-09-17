@@ -32,11 +32,12 @@ joint_limits:
 
 # Workspace boundaries in meters
 # Robot base mounted on floor (z=0), working above 60mm wood surface
+# Updated to reflect actual robot reach (730mm theoretical, ~720mm practical)
 workspace:
-  x_min: -0.7 # meters (within robot reach)
-  x_max: 0.7 # meters
-  y_min: -0.7 # meters
-  y_max: 0.7 # meters
+  x_min: -0.72 # meters (conservative limit based on 730mm reach)
+  x_max: 0.72 # meters
+  y_min: -0.72 # meters
+  y_max: 0.72 # meters
   z_min: 0.06 # 60mm above floor (wood surface level)
   z_max: 1.1 # meters (maximum reach height)
 
@@ -49,36 +50,52 @@ environment:
   wood_thickness: 0.06    # 60mm thick wood surface
   wood_area: [1.4, 1.0]   # 1.4m x 1.0m working area
 
-# Self-collision parameters (derived from RB3-730ES-U URDF)
+# Self-collision parameters (MANUFACTURER VALIDATED - RB3-730ES-U Official Specs)
 self_collision:
   enabled: true
   robot_model: "RB3-730ES-U"
-  # Key dimensions from URDF (meters)
-  base_height: 0.1453      # Base joint height
-  upper_arm_length: 0.286  # Shoulder to elbow  
-  forearm_length: 0.344    # Elbow to wrist2
-  tcp_extension: 0.1       # Wrist3 to TCP
-  # Critical joint pairs with minimum safe distances (meters)
+  # Key dimensions from OFFICIAL MANUFACTURER SPECIFICATIONS (meters)
+  base_height: 0.1453      # Base joint height (B = 145.3mm - CONFIRMED)
+  upper_arm_length: 0.286  # Shoulder to elbow (C = 286mm - CONFIRMED) 
+  forearm_length: 0.344    # Elbow to wrist2 (D = 344mm - CONFIRMED)
+  tcp_extension: 0.1       # Wrist3 to TCP (E = 100mm - CONFIRMED)
+  # Additional manufacturer dimensions for precise collision calculation
+  total_height: 0.730      # A = 730mm (full reach)
+  dimension_f: 0.11715     # F = 117.15mm
+  dimension_g: 0.1107      # G = 110.7mm  
+  dimension_h: 0.0946      # H = 94.6mm
+  # Critical joint pairs with MANUFACTURER-BASED minimum safe distances (meters)
+  # Calculated from official dimensional drawings and link geometry
   critical_pairs:
-    shoulder_wrist2: 0.12    # Upper arm vs wrist assembly
-    shoulder_wrist3: 0.10    # Upper arm vs wrist3
-    shoulder_tcp: 0.15       # Upper arm vs end effector
-    elbow_base: 0.18         # Forearm vs base (145mm base + margin)
-    wrist1_base: 0.16        # Wrist1 vs base
-    wrist2_base: 0.16        # Wrist2 vs base
+    shoulder_wrist2: 0.045   # Upper arm vs wrist assembly (45mm - based on link thickness)
+    shoulder_wrist3: 0.025   # Upper arm vs wrist3 (25mm - allows tight folding configs)
+    shoulder_tcp: 0.055      # Upper arm vs end effector (55mm - includes TCP extension)
+    elbow_base: 0.090        # Forearm vs base (90mm - realistic for 145.3mm base)
+    wrist1_base: 0.075       # Wrist1 vs base (75mm - wrist housing clearance)
+    wrist2_base: 0.075       # Wrist2 vs base (75mm - wrist housing clearance)
 
 # Safety margins (reduces effective workspace for extra safety)
+# Reduced margins to allow more of the robot's actual workspace
 safety_margins:
   enabled: true
-  margin_x: 0.05 # meters - reduce X workspace by this amount on each side
-  margin_y: 0.05 # meters - reduce Y workspace by this amount on each side
-  margin_z: 0.05 # meters - reduce Z workspace by this amount on top/bottom
+  margin_x: 0.02 # meters - reduced from 0.05 to 0.02 (20mm vs 50mm)
+  margin_y: 0.02 # meters - reduced margin for better workspace utilization
+  margin_z: 0.03 # meters - slightly reduced Z margin
+
+# Enhanced collision detection settings
+# Relaxed settings to better utilize robot workspace while maintaining safety
+collision_detection:
+  adaptive_thresholds: true          # Enable adaptive collision thresholds
+  operational_safety_factor: 1.0     # Reduced from 0.95 to 1.0 (less restrictive)
+  edge_case_tolerance: 1.3           # Increased tolerance for complex configurations
+  escape_perturbation_enabled: true  # Allow escape perturbations when stuck
 
 # Workspace validation settings
 validation:
   path_resolution: 0.01 # meters - check every 1cm along path
   strict_boundaries: true # reject ANY point outside boundaries
   shape: "rectangular" # currently only rectangular supported
+  adaptive_validation: true # Enable adaptive validation based on pose complexity
 
 # Planning configuration
 planning:

@@ -205,25 +205,72 @@ class EnhancedCollisionChecker:
         return CollisionResult(False, CollisionType.NONE, "Self-collision OK")
     
     def _get_adaptive_threshold(self, joint1_idx: int, joint2_idx: int, joint_angles: np.ndarray) -> float:
-        """Get adaptive collision threshold based on robot configuration."""
+        """Enhanced adaptive collision threshold based on robot configuration and pose complexity."""
         # Base threshold from configuration
         base_threshold = self.min_joint_distances.get((joint1_idx, joint2_idx), 0.08)
         
-        # Configuration-dependent adjustments
+        # Configuration-dependent adjustments with more sophisticated logic
         config_factor = 1.0
+        
+        # Compute overall configuration "complexity" - how far from neutral pose
+        neutral_pose = np.array([0.0, -0.5, 0.5, 0.0, 0.0, 0.0])  # Typical neutral for RB3-730ES-U
+        config_deviation = np.linalg.norm(joint_angles - neutral_pose)
         
         # For specific joint pairs, adjust threshold based on configuration
         if (joint1_idx, joint2_idx) == (1, 4):  # Shoulder vs Wrist2
             # Reduce threshold when shoulder is in certain positions
             shoulder_angle = abs(joint_angles[1])
+            elbow_angle = abs(joint_angles[2])
+            
             if shoulder_angle < 0.5:  # ~30 degrees
-                config_factor = 0.7  # Allow closer proximity
+                config_factor *= 0.8  # Allow closer proximity
+            if elbow_angle > 1.0:  # Elbow bent significantly
+                config_factor *= 0.7  # Allow even closer when elbow is bent
+                
+        elif (joint1_idx, joint2_idx) == (1, 5):  # Shoulder vs Wrist3
+            # Similar logic but slightly more permissive
+            shoulder_angle = abs(joint_angles[1])
+            if shoulder_angle < 0.3:
+                config_factor *= 0.6
+                
+        elif (joint1_idx, joint2_idx) == (1, 6):  # Shoulder vs TCP
+            # Most conservative for end effector
+            shoulder_angle = abs(joint_angles[1])
+            if shoulder_angle < 0.7 and config_deviation < 1.5:
+                config_factor *= 0.75
         
         elif (joint1_idx, joint2_idx) == (2, 0):  # Elbow vs Base
-            # Adjust based on elbow configuration
+            # Adjust based on elbow configuration and base rotation
             elbow_angle = abs(joint_angles[2])
+            base_angle = abs(joint_angles[0])
+            
             if elbow_angle > 1.57:  # > 90 degrees
-                config_factor = 0.8  # Allow closer when elbow is bent
+                config_factor *= 0.7  # Allow closer when elbow is bent
+            if base_angle < 0.5:  # Base close to center
+                config_factor *= 0.85
+                
+        # Additional adaptive factors
+        
+        # 1. Workspace edge factor - more permissive near workspace boundaries
+        # (This would require workspace position, using joint angles as proxy)
+        if config_deviation > 2.0:  # Complex configuration
+            config_factor *= 0.9  # Slightly more permissive for complex poses
+            
+        # 2. Joint velocity consideration (if available in future)
+        # For now, assume static poses
+        
+        # 3. Operational mode consideration
+        # Add safety factor for different operation modes
+        operational_safety = self.config.get('operational_safety_factor', 1.0)
+        config_factor *= operational_safety
+        
+        # Ensure we don't go below a minimum safety threshold
+        min_safety_factor = 0.5  # Never less than 50% of base threshold
+        config_factor = max(min_safety_factor, config_factor)
+        
+        # Also ensure we don't exceed a maximum (for very conservative operations)
+        max_safety_factor = 1.5
+        config_factor = min(max_safety_factor, config_factor)
         
         return base_threshold * config_factor
     
