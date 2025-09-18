@@ -175,7 +175,10 @@ class EnhancedCollisionChecker:
         return CollisionResult(False, CollisionType.NONE, "Floor/surface collision OK")
     
     def check_self_collision(self, joint_angles: np.ndarray, joint_positions: List[np.ndarray]) -> CollisionResult:
-        """Check for self-collision using adaptive thresholds."""
+        """Check for self-collision using adaptive thresholds.
+        
+        FIXED: Proper unit handling - distance in meters, thresholds returned in mm.
+        """
         # Special handling for home position [0,0,0,0,0,0]
         if np.allclose(joint_angles, 0.0, atol=0.01):
             return CollisionResult(False, CollisionType.NONE, "Home position - safe configuration")
@@ -187,27 +190,45 @@ class EnhancedCollisionChecker:
                 pos1 = joint_positions[joint1_idx]
                 pos2 = joint_positions[joint2_idx]
                 
-                # Calculate distance between joints
-                distance = np.linalg.norm(pos1 - pos2)
+                # Calculate distance between joints (in meters)
+                distance_m = np.linalg.norm(pos1 - pos2)
+                distance_mm = distance_m * 1000  # Convert to mm for comparison
                 
-                # Get adaptive threshold based on configuration
-                min_distance = self._get_adaptive_threshold(joint1_idx, joint2_idx, joint_angles)
+                # Get adaptive threshold (returns value in mm)
+                min_distance_mm = self._get_adaptive_threshold(joint1_idx, joint2_idx, joint_angles)
                 
-                if distance < min_distance:
+                if distance_mm < min_distance_mm:
                     joint_names = [f"J{joint1_idx}", f"J{joint2_idx}"]
                     return CollisionResult(
                         is_collision=True,
                         collision_type=CollisionType.SELF_COLLISION,
-                        details=f"Self-collision between {joint_names[0]} and {joint_names[1]}: {distance*1000:.1f}mm < {min_distance*1000:.1f}mm",
+                        details=f"Self-collision between {joint_names[0]} and {joint_names[1]}: {distance_mm:.1f}mm < {min_distance_mm:.1f}mm",
                         link_names=joint_names
                     )
         
         return CollisionResult(False, CollisionType.NONE, "Self-collision OK")
     
     def _get_adaptive_threshold(self, joint1_idx: int, joint2_idx: int, joint_angles: np.ndarray) -> float:
-        """Enhanced adaptive collision threshold based on robot configuration and pose complexity."""
-        # Base threshold from configuration
-        base_threshold = self.min_joint_distances.get((joint1_idx, joint2_idx), 0.08)
+        """Enhanced adaptive collision threshold based on robot configuration and pose complexity.
+        
+        FIXED: Ensures minimum thresholds are always maintained and handles special cases properly.
+        """
+        # Base threshold from configuration (in meters, converted to mm for internal use)
+        base_threshold_m = self.min_joint_distances.get((joint1_idx, joint2_idx), 0.030)  # 30mm default
+        base_threshold = base_threshold_m * 1000  # Convert to mm
+        
+        # Get collision detection settings
+        collision_config = self.config.get('collision_detection', {})
+        minimum_threshold = collision_config.get('minimum_threshold_mm', 10.0)  # Never below 10mm
+        operational_safety = collision_config.get('operational_safety_factor', 1.1)
+        edge_tolerance = collision_config.get('edge_case_tolerance', 1.5)
+        home_exception = collision_config.get('home_position_exception', True)
+        
+        # Special handling for home position [0,0,0,0,0,0]
+        if home_exception and np.allclose(joint_angles, 0.0, atol=0.01):
+            # Home position is always safe - use minimum threshold
+            logger.debug(f"Home position detected - using minimum threshold: {minimum_threshold}mm")
+            return max(minimum_threshold, base_threshold * 0.5)
         
         # Configuration-dependent adjustments with more sophisticated logic
         config_factor = 1.0
@@ -223,21 +244,21 @@ class EnhancedCollisionChecker:
             elbow_angle = abs(joint_angles[2])
             
             if shoulder_angle < 0.5:  # ~30 degrees
-                config_factor *= 0.8  # Allow closer proximity
+                config_factor *= 0.9  # Slightly more permissive (was 0.8)
             if elbow_angle > 1.0:  # Elbow bent significantly
-                config_factor *= 0.7  # Allow even closer when elbow is bent
+                config_factor *= 0.85  # More conservative (was 0.7)
                 
         elif (joint1_idx, joint2_idx) == (1, 5):  # Shoulder vs Wrist3
             # Similar logic but slightly more permissive
             shoulder_angle = abs(joint_angles[1])
             if shoulder_angle < 0.3:
-                config_factor *= 0.6
+                config_factor *= 0.8  # Less aggressive (was 0.6)
                 
         elif (joint1_idx, joint2_idx) == (1, 6):  # Shoulder vs TCP
             # Most conservative for end effector
             shoulder_angle = abs(joint_angles[1])
             if shoulder_angle < 0.7 and config_deviation < 1.5:
-                config_factor *= 0.75
+                config_factor *= 0.85  # More conservative (was 0.75)
         
         elif (joint1_idx, joint2_idx) == (2, 0):  # Elbow vs Base
             # Adjust based on elbow configuration and base rotation
@@ -245,34 +266,37 @@ class EnhancedCollisionChecker:
             base_angle = abs(joint_angles[0])
             
             if elbow_angle > 1.57:  # > 90 degrees
-                config_factor *= 0.7  # Allow closer when elbow is bent
+                config_factor *= 0.8  # More conservative (was 0.7)
             if base_angle < 0.5:  # Base close to center
-                config_factor *= 0.85
+                config_factor *= 0.9  # More conservative (was 0.85)
                 
         # Additional adaptive factors
         
         # 1. Workspace edge factor - more permissive near workspace boundaries
-        # (This would require workspace position, using joint angles as proxy)
         if config_deviation > 2.0:  # Complex configuration
-            config_factor *= 0.9  # Slightly more permissive for complex poses
+            config_factor *= edge_tolerance * 0.6  # Use edge tolerance setting
             
-        # 2. Joint velocity consideration (if available in future)
-        # For now, assume static poses
-        
-        # 3. Operational mode consideration
-        # Add safety factor for different operation modes
-        operational_safety = self.config.get('operational_safety_factor', 1.0)
+        # 2. Apply operational safety factor
         config_factor *= operational_safety
         
-        # Ensure we don't go below a minimum safety threshold
-        min_safety_factor = 0.5  # Never less than 50% of base threshold
+        # 3. Ensure we don't go below a minimum safety threshold
+        min_safety_factor = 0.6  # Never less than 60% of base threshold (was 50%)
         config_factor = max(min_safety_factor, config_factor)
         
-        # Also ensure we don't exceed a maximum (for very conservative operations)
-        max_safety_factor = 1.5
+        # 4. Also ensure we don't exceed a maximum (for very conservative operations)
+        max_safety_factor = 2.0  # Allow up to 2x base threshold (was 1.5x)
         config_factor = min(max_safety_factor, config_factor)
         
-        return base_threshold * config_factor
+        # Calculate final threshold
+        final_threshold = base_threshold * config_factor
+        
+        # CRITICAL: Ensure we never return below the absolute minimum
+        final_threshold = max(minimum_threshold, final_threshold)
+        
+        logger.debug(f"Adaptive threshold J{joint1_idx}-J{joint2_idx}: {final_threshold:.1f}mm "
+                    f"(base: {base_threshold:.1f}mm, factor: {config_factor:.2f})")
+        
+        return final_threshold
     
 
     def check_path_collision(self, joint_path: List[np.ndarray], fk_function) -> CollisionResult:

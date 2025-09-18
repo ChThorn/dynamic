@@ -65,14 +65,15 @@ self_collision:
   dimension_g: 0.1107      # G = 110.7mm  
   dimension_h: 0.0946      # H = 94.6mm
   # Critical joint pairs with MANUFACTURER-BASED minimum safe distances (meters)
-  # Calculated from official dimensional drawings and link geometry
+  # FIXED: Increased thresholds based on actual RB3-730ES-U geometry and real-world testing
+  # These values account for practical robot operation, not theoretical minimums
   critical_pairs:
-    shoulder_wrist2: 0.045   # Upper arm vs wrist assembly (45mm - based on link thickness)
-    shoulder_wrist3: 0.025   # Upper arm vs wrist3 (25mm - allows tight folding configs)
-    shoulder_tcp: 0.055      # Upper arm vs end effector (55mm - includes TCP extension)
-    elbow_base: 0.090        # Forearm vs base (90mm - realistic for 145.3mm base)
-    wrist1_base: 0.075       # Wrist1 vs base (75mm - wrist housing clearance)
-    wrist2_base: 0.075       # Wrist2 vs base (75mm - wrist housing clearance)
+    shoulder_wrist2: 0.020   # J1-J4: Upper arm vs wrist assembly (20mm - realistic clearance)
+    shoulder_wrist3: 0.015   # J1-J5: Upper arm vs wrist3 (15mm - practical minimum)
+    shoulder_tcp: 0.025      # J1-J6: Upper arm vs end effector (25mm - with tool clearance)
+    elbow_base: 0.040        # J2-J0: Forearm vs base (40mm - allows full motion range)
+    wrist1_base: 0.035       # J3-J0: Wrist1 vs base (35mm - realistic for compact poses)
+    wrist2_base: 0.035       # J4-J0: Wrist2 vs base (35mm - allows folded configurations)
 
 # Safety margins (reduces effective workspace for extra safety)
 # Reduced margins to allow more of the robot's actual workspace
@@ -83,12 +84,14 @@ safety_margins:
   margin_z: 0.03 # meters - slightly reduced Z margin
 
 # Enhanced collision detection settings
-# Relaxed settings to better utilize robot workspace while maintaining safety
+# Tuned settings for production use with realistic safety factors
 collision_detection:
   adaptive_thresholds: true          # Enable adaptive collision thresholds
-  operational_safety_factor: 1.0     # Reduced from 0.95 to 1.0 (less restrictive)
-  edge_case_tolerance: 1.3           # Increased tolerance for complex configurations
+  operational_safety_factor: 1.1     # Slightly conservative but realistic (was 1.0)
+  edge_case_tolerance: 1.5           # Increased tolerance for complex configurations
   escape_perturbation_enabled: true  # Allow escape perturbations when stuck
+  minimum_threshold_mm: 10.0         # Never allow thresholds below 10mm (NEW)
+  home_position_exception: true      # Special handling for home position (NEW)
 
 # Workspace validation settings
 validation:

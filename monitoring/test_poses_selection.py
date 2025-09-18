@@ -20,6 +20,9 @@ from scipy.spatial.transform import Rotation as R
 
 # Add the parent directory to the Python path for integration
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append('../kinematics/src')
+
+from forward_kinematic import ForwardKinematics
 
 def pose_to_transformation_matrix(pose):
     """Convert 6-element pose [x, y, z, rx, ry, rz] to 4x4 transformation matrix."""
@@ -109,17 +112,49 @@ def run_pick_place_pose_demo():
             print(f"Waypoints: {len(plan.waypoints)}")
             print(f"Execution time: {plan.execution_time_sec:.2f} seconds")
             
-            # Step 5: Display waypoints
-            print(f"\n📋 STEP 5: Generated Waypoints")
+            # Step 5: Display waypoints with FK validation
+            print(f"\n📋 STEP 5: Generated Waypoints with FK Validation")
             print("Robot joint waypoints (degrees):")
             print("-" * 50)
+            
+            # FK Validation setup
+            fk_validator = ForwardKinematics()
+            validation_errors = []
+            max_error = 0.0
             
             for i, waypoint in enumerate(plan.waypoints):
                 wp_type = "Start" if i == 0 else "End" if i == len(plan.waypoints)-1 else f"#{i}"
                 joints_str = ", ".join([f"{j:.1f}" for j in waypoint.joints_deg])
-                tcp_pos = waypoint.tcp_position_mm
+                
+                # FK validation: compute actual TCP position
+                joints_rad = np.deg2rad(waypoint.joints_deg)
+                T_actual = fk_validator.compute_forward_kinematics(joints_rad)
+                actual_tcp_pos = T_actual[:3, 3] * 1000  # Convert to mm
+                
+                # Compare with expected TCP position
+                expected_tcp_pos = waypoint.tcp_position_mm
+                error = np.linalg.norm(actual_tcp_pos - expected_tcp_pos)
+                max_error = max(max_error, error)
+                
+                if error > 1.0:  # Error threshold: 1mm
+                    validation_errors.append(f"Waypoint #{i}: {error:.3f}mm error")
+                
                 print(f"  {wp_type:>5}: [{joints_str}]")
-                print(f"         TCP: [{tcp_pos[0]:.1f}, {tcp_pos[1]:.1f}, {tcp_pos[2]:.1f}] mm")
+                print(f"         Expected TCP: [{expected_tcp_pos[0]:.1f}, {expected_tcp_pos[1]:.1f}, {expected_tcp_pos[2]:.1f}] mm")
+                print(f"         FK Actual TCP: [{actual_tcp_pos[0]:.1f}, {actual_tcp_pos[1]:.1f}, {actual_tcp_pos[2]:.1f}] mm" + 
+                      (f" (err: {error:.3f}mm)" if error > 0.1 else ""))
+            
+            # FK Validation summary
+            print(f"\n🔍 FK VALIDATION SUMMARY:")
+            if validation_errors:
+                print(f"⚠️  Found {len(validation_errors)} waypoints with errors > 1mm:")
+                for error_msg in validation_errors:
+                    print(f"❌ {error_msg}")
+                print(f"📊 Maximum error: {max_error:.3f}mm")
+            else:
+                print(f"✅ All waypoints validated successfully")
+                print(f"📊 Maximum error: {max_error:.3f}mm (EXCELLENT)")
+            print("-" * 50)
             
             # Step 6: Generate robot program
             print(f"\n🤖 STEP 6: Robot Program Generation")

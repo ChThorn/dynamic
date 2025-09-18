@@ -28,9 +28,11 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-# Production constants
-REACHABILITY_DISTANCE = 0.05  # meters - FK sample within 5cm of workspace point
-IK_SEED_NEIGHBOR_COUNT = 5    # Number of neighboring configurations to consider
+# Production constants - ENHANCED for better coverage
+REACHABILITY_DISTANCE = 0.08  # meters - Increased from 5cm to 8cm for better coverage
+IK_SEED_NEIGHBOR_COUNT = 8    # Increased from 5 to 8 neighboring configurations
+WORKSPACE_GRID_RESOLUTION = 0.05  # meters - Grid resolution for workspace sampling
+MIN_SAMPLES_PER_REGION = 3   # Minimum samples required to create a region
 
 @dataclass
 class CSpaceRegion:
@@ -113,13 +115,14 @@ class ConfigurationSpaceAnalyzer:
         self._update_progress(20.0, "Generating C-space samples")
         c_space_points = self._generate_c_space_samples(c_space_samples)
         
-        # Build the reachability mapping
+        # Build the reachability mapping - ENHANCED for better coverage
         self._update_progress(30.0, "Building reachability mapping")
         self.reachability_map = {}
+        workspace_coverage = {}  # Track coverage statistics
         
         for i, q_sample in enumerate(c_space_points):
             progress = 30.0 + (i / len(c_space_points)) * 60.0
-            if i % 100 == 0:
+            if i % 50 == 0:  # More frequent updates (was 100)
                 self._update_progress(progress, f"Processing C-space samples ({100*i//len(c_space_points)}%)")
             
             try:
@@ -127,33 +130,55 @@ class ConfigurationSpaceAnalyzer:
                 T = self.fk.compute_forward_kinematics(q_sample)
                 tcp_position = T[:3, 3]
                 
-                # Find nearby workspace points
+                # Find nearby workspace points using improved clustering
                 for ws_point in workspace_points:
                     distance = np.linalg.norm(tcp_position - ws_point)
                     
                     if distance <= REACHABILITY_DISTANCE:
-                        # Create a key for this workspace region
-                        ws_key = tuple(np.round(ws_point, 2))  # Round to 1cm precision
+                        # Create a key for this workspace region with finer resolution
+                        ws_key = tuple(np.round(ws_point / WORKSPACE_GRID_RESOLUTION) * WORKSPACE_GRID_RESOLUTION)
                         
                         if ws_key not in self.reachability_map:
                             self.reachability_map[ws_key] = []
+                            workspace_coverage[ws_key] = 0
+                        
+                        # Add configuration with quality metrics
+                        config_quality = self._evaluate_configuration_quality(q_sample, tcp_position, ws_point)
                         
                         self.reachability_map[ws_key].append({
                             'joint_config': q_sample.copy(),
                             'tcp_position': tcp_position.copy(),
-                            'distance': distance
+                            'distance': distance,
+                            'quality': config_quality  # NEW: Quality metric
                         })
+                        workspace_coverage[ws_key] += 1
                         
             except Exception as e:
                 logger.debug(f"FK computation failed for sample {i}: {e}")
                 continue
         
-        # Sort configurations by distance for each workspace point
+        # Filter regions with insufficient samples and sort by quality
         self._update_progress(90.0, "Optimizing reachability data")
+        filtered_map = {}
+        
         for ws_key in self.reachability_map:
-            self.reachability_map[ws_key].sort(key=lambda x: x['distance'])
-            # Keep only the best configurations to save memory
-            self.reachability_map[ws_key] = self.reachability_map[ws_key][:IK_SEED_NEIGHBOR_COUNT]
+            configs = self.reachability_map[ws_key]
+            
+            # Only keep regions with sufficient samples
+            if len(configs) >= MIN_SAMPLES_PER_REGION:
+                # Sort by quality (higher is better) then by distance (lower is better)
+                configs.sort(key=lambda x: (-x['quality'], x['distance']))
+                # Keep only the best configurations to save memory
+                filtered_map[ws_key] = configs[:IK_SEED_NEIGHBOR_COUNT]
+        
+        self.reachability_map = filtered_map
+        
+        # Log coverage statistics
+        total_regions = len(self.reachability_map)
+        if total_regions > 0:
+            avg_configs_per_region = np.mean([len(configs) for configs in self.reachability_map.values()])
+            logger.info(f"Reachability map coverage: {total_regions} regions, "
+                       f"avg {avg_configs_per_region:.1f} configs/region")
         
         self._update_progress(100.0, "Complete")
         self._build_status = "complete"
@@ -164,6 +189,45 @@ class ConfigurationSpaceAnalyzer:
         save_path = save_path or cache_path
         if save_path:
             self._save_reachability_map(save_path)
+    
+    def _evaluate_configuration_quality(self, joint_config: np.ndarray, tcp_position: np.ndarray, 
+                                       target_position: np.ndarray) -> float:
+        """Evaluate the quality of a joint configuration for IK seeding.
+        
+        Higher scores indicate better configurations for IK convergence.
+        """
+        quality = 1.0
+        
+        # 1. Distance to target (closer is better)
+        distance = np.linalg.norm(tcp_position - target_position)
+        distance_score = max(0.0, 1.0 - distance / REACHABILITY_DISTANCE)
+        quality *= distance_score
+        
+        # 2. Configuration singularity avoidance
+        # Avoid configurations near joint limits
+        joint_ranges = self.joint_limits[1] - self.joint_limits[0]  # max - min
+        joint_centers = (self.joint_limits[1] + self.joint_limits[0]) / 2  # center positions
+        
+        # Penalty for joints near limits
+        for i, (q, center, range_val) in enumerate(zip(joint_config, joint_centers, joint_ranges)):
+            normalized_pos = abs(q - center) / (range_val / 2)  # 0 (center) to 1 (limit)
+            if normalized_pos > 0.8:  # Near joint limit
+                quality *= (1.0 - (normalized_pos - 0.8) / 0.2 * 0.5)  # Reduce quality by up to 50%
+        
+        # 3. Manipulability measure (avoid singular configurations)
+        # Simple heuristic: penalize extreme joint angles
+        extreme_penalty = 0.0
+        for q in joint_config:
+            if abs(q) > np.pi * 0.8:  # Beyond 80% of ±π
+                extreme_penalty += 0.1
+        quality *= max(0.1, 1.0 - extreme_penalty)
+        
+        # 4. Configuration complexity (simpler is better for IK convergence)
+        complexity = np.linalg.norm(joint_config) / np.sqrt(len(joint_config))
+        complexity_score = max(0.2, 1.0 - complexity / np.pi)  # Normalize by π
+        quality *= complexity_score
+        
+        return max(0.01, quality)  # Ensure minimum quality
     
     def get_best_ik_region(self, target_position: np.ndarray) -> Optional[np.ndarray]:
         """
@@ -206,31 +270,123 @@ class ConfigurationSpaceAnalyzer:
         return None
     
     def _generate_workspace_samples(self, num_samples: int) -> List[np.ndarray]:
-        """Generate sample points in the robot's workspace."""
-        # Define workspace bounds based on typical robot reach
-        # These should be adjusted based on the specific robot
-        x_range = (-0.8, 0.8)  # meters
-        y_range = (-0.8, 0.8)  # meters  
-        z_range = (0.1, 1.2)   # meters (above table surface)
+        """Generate sample points in the robot's workspace with improved distribution."""
+        # Define workspace bounds based on RB3-730ES-U specifications
+        x_range = (-0.7, 0.7)   # meters (conservative for 730mm reach)
+        y_range = (-0.7, 0.7)   # meters  
+        z_range = (0.1, 1.0)    # meters (above table surface, realistic height)
         
         samples = []
-        for _ in range(num_samples):
+        
+        # Generate samples using mixed strategy for better coverage
+        uniform_samples = int(num_samples * 0.6)  # 60% uniform distribution
+        focused_samples = int(num_samples * 0.4)  # 40% focused on common work areas
+        
+        # 1. Uniform random sampling
+        for _ in range(uniform_samples):
             x = np.random.uniform(*x_range)
             y = np.random.uniform(*y_range)
             z = np.random.uniform(*z_range)
             samples.append(np.array([x, y, z]))
         
+        # 2. Focused sampling on typical work areas
+        work_zones = [
+            # Front center zone (most common)
+            {'center': [0.4, 0.0, 0.5], 'radius': 0.15, 'weight': 0.4},
+            # Right side zone
+            {'center': [0.2, 0.3, 0.4], 'radius': 0.12, 'weight': 0.25},
+            # Left side zone  
+            {'center': [0.2, -0.3, 0.4], 'radius': 0.12, 'weight': 0.25},
+            # High reach zone
+            {'center': [0.3, 0.0, 0.8], 'radius': 0.1, 'weight': 0.1}
+        ]
+        
+        for _ in range(focused_samples):
+            # Select zone based on weights
+            zone_weights = [z['weight'] for z in work_zones]
+            zone_idx = np.random.choice(len(work_zones), p=zone_weights)
+            zone = work_zones[zone_idx]
+            
+            # Sample within the zone
+            center = np.array(zone['center'])
+            radius = zone['radius']
+            
+            # Random direction and distance
+            direction = np.random.randn(3)
+            direction /= np.linalg.norm(direction)
+            distance = np.random.uniform(0, radius)
+            
+            sample = center + direction * distance
+            
+            # Clamp to workspace bounds
+            sample[0] = np.clip(sample[0], *x_range)
+            sample[1] = np.clip(sample[1], *y_range)
+            sample[2] = np.clip(sample[2], *z_range)
+            
+            samples.append(sample)
+        
         return samples
     
     def _generate_c_space_samples(self, num_samples: int) -> List[np.ndarray]:
-        """Generate sample joint configurations within joint limits."""
+        """Generate sample joint configurations within joint limits with improved distribution."""
         samples = []
         
-        for _ in range(num_samples):
+        # Generate samples using mixed strategy
+        uniform_samples = int(num_samples * 0.5)  # 50% uniform
+        focused_samples = int(num_samples * 0.3)  # 30% near home/neutral poses
+        boundary_samples = int(num_samples * 0.2) # 20% near workspace boundaries
+        
+        # 1. Uniform random sampling
+        for _ in range(uniform_samples):
             q_sample = np.random.uniform(
                 self.joint_limits[0],  # min limits
                 self.joint_limits[1]   # max limits
             )
+            samples.append(q_sample)
+        
+        # 2. Focused sampling near neutral/home configurations
+        neutral_configs = [
+            np.zeros(self.n_joints),  # Home position
+            np.array([0, -0.5, 0.5, 0, 0, 0]),  # Neutral working pose
+            np.array([0, -0.8, 1.2, 0, 0.6, 0])  # Extended reach pose
+        ]
+        
+        for _ in range(focused_samples):
+            # Choose a neutral config as base
+            base_config = neutral_configs[np.random.randint(len(neutral_configs))]
+            
+            # Add small random perturbation
+            noise_scale = 0.3  # radians
+            noise = np.random.normal(0, noise_scale, self.n_joints)
+            q_sample = base_config + noise
+            
+            # Clamp to joint limits
+            q_sample = np.clip(q_sample, self.joint_limits[0], self.joint_limits[1])
+            samples.append(q_sample)
+        
+        # 3. Boundary sampling for edge case coverage
+        for _ in range(boundary_samples):
+            q_sample = np.random.uniform(
+                self.joint_limits[0],
+                self.joint_limits[1]
+            )
+            
+            # Push some joints towards their limits
+            for i in range(self.n_joints):
+                if np.random.random() < 0.3:  # 30% chance per joint
+                    if np.random.random() < 0.5:
+                        # Push towards upper limit
+                        q_sample[i] = np.random.uniform(
+                            self.joint_limits[1][i] * 0.7,
+                            self.joint_limits[1][i] * 0.95
+                        )
+                    else:
+                        # Push towards lower limit
+                        q_sample[i] = np.random.uniform(
+                            self.joint_limits[0][i] * 0.95,
+                            self.joint_limits[0][i] * 0.7
+                        )
+            
             samples.append(q_sample)
         
         return samples

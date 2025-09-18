@@ -154,9 +154,256 @@ class MotionPlanner:
         self._planning_lock = threading.RLock()
         self._stats_lock = threading.RLock()
         self._config_lock = threading.RLock()
+        
+        # Production features
+        self.production_mode = self.config.get('production_mode', False)
+        self.validation_mode = self.config.get('validation_mode', False)
+        self.detailed_logging = self.config.get('detailed_logging', False)
+        
+        # Error reporting and diagnostics
+        self.error_history = []
+        self.max_error_history = 100
+        self.diagnostic_data = {
+            'last_successful_plan': None,
+            'consecutive_failures': 0,
+            'failure_patterns': {},
+            'performance_metrics': []
+        }
     
         logger.info("Motion planner initialized with thread safety")
     
+    def _log_error(self, error_type: str, error_message: str, context: Dict[str, Any] = None):
+        """Log error with production features."""
+        error_data = {
+            'timestamp': time.time(),
+            'type': error_type,
+            'message': error_message,
+            'context': context or {}
+        }
+        
+        # Add to error history
+        self.error_history.append(error_data)
+        if len(self.error_history) > self.max_error_history:
+            self.error_history.pop(0)
+        
+        # Update failure patterns
+        self.diagnostic_data['consecutive_failures'] += 1
+        if error_type not in self.diagnostic_data['failure_patterns']:
+            self.diagnostic_data['failure_patterns'][error_type] = 0
+        self.diagnostic_data['failure_patterns'][error_type] += 1
+        
+        if self.detailed_logging:
+            logger.error(f"Planning error [{error_type}]: {error_message}")
+            if context:
+                logger.debug(f"Error context: {context}")
+    
+    def _log_success(self, plan: MotionPlan, planning_time: float):
+        """Log successful planning with production features."""
+        self.diagnostic_data['last_successful_plan'] = {
+            'timestamp': time.time(),
+            'planning_time': planning_time,
+            'strategy': plan.strategy_used.value if plan.strategy_used else 'unknown',
+            'waypoints': plan.num_waypoints
+        }
+        
+        # Reset consecutive failures
+        self.diagnostic_data['consecutive_failures'] = 0
+        
+        # Add performance metric
+        self.diagnostic_data['performance_metrics'].append({
+            'timestamp': time.time(),
+            'planning_time': planning_time,
+            'strategy': plan.strategy_used.value if plan.strategy_used else 'unknown'
+        })
+        
+        # Keep only recent metrics
+        if len(self.diagnostic_data['performance_metrics']) > 100:
+            self.diagnostic_data['performance_metrics'].pop(0)
+        
+        if self.detailed_logging:
+            logger.info(f"Planning successful in {planning_time:.3f}s using {plan.strategy_used.value if plan.strategy_used else 'unknown'}")
+    
+    def get_diagnostic_report(self) -> Dict[str, Any]:
+        """Get comprehensive diagnostic report for production monitoring."""
+        with self._stats_lock:
+            # Calculate success rate
+            total_plans = self.stats['total_plans']
+            success_rate = (self.stats['successful_plans'] / total_plans) if total_plans > 0 else 0.0
+            
+            # Calculate average planning time
+            if self.diagnostic_data['performance_metrics']:
+                recent_times = [m['planning_time'] for m in self.diagnostic_data['performance_metrics'][-20:]]
+                avg_planning_time = sum(recent_times) / len(recent_times)
+            else:
+                avg_planning_time = 0.0
+            
+            # Get failure patterns
+            total_failures = sum(self.diagnostic_data['failure_patterns'].values())
+            failure_rates = {}
+            if total_failures > 0:
+                for error_type, count in self.diagnostic_data['failure_patterns'].items():
+                    failure_rates[error_type] = count / total_failures
+            
+            return {
+                'production_mode': self.production_mode,
+                'validation_mode': self.validation_mode,
+                'planning_statistics': self.stats.copy(),
+                'success_rate': success_rate,
+                'average_planning_time': avg_planning_time,
+                'consecutive_failures': self.diagnostic_data['consecutive_failures'],
+                'failure_patterns': self.diagnostic_data['failure_patterns'].copy(),
+                'failure_rates': failure_rates,
+                'last_successful_plan': self.diagnostic_data['last_successful_plan'],
+                'recent_errors': self.error_history[-5:] if self.error_history else [],
+                'error_history_count': len(self.error_history),
+                'cspace_analysis_enabled': self.cspace_analysis_enabled,
+                'timestamp': time.time()
+            }
+    
+    def enable_production_mode(self, detailed_logging: bool = True, validation_mode: bool = False):
+        """Enable production mode with enhanced monitoring and error reporting."""
+        with self._config_lock:
+            self.production_mode = True
+            self.detailed_logging = detailed_logging
+            self.validation_mode = validation_mode
+            
+            # Update configuration
+            self.config.update({
+                'production_mode': True,
+                'detailed_logging': detailed_logging,
+                'validation_mode': validation_mode,
+                'enable_fallbacks': True,  # Always enable fallbacks in production
+                'progress_feedback': True,  # Enable progress feedback
+                'enable_timing_breakdown': True  # Enable performance profiling
+            })
+        
+        logger.info(f"Production mode enabled: logging={detailed_logging}, validation={validation_mode}")
+    
+    def disable_production_mode(self):
+        """Disable production mode and return to standard operation."""
+        with self._config_lock:
+            self.production_mode = False
+            self.detailed_logging = False
+            self.validation_mode = False
+            
+            # Update configuration
+            self.config.update({
+                'production_mode': False,
+                'detailed_logging': False,
+                'validation_mode': False
+            })
+        
+        logger.info("Production mode disabled")
+    
+    def validate_configuration(self) -> Dict[str, Any]:
+        """Validate current configuration for production readiness."""
+        issues = []
+        warnings = []
+        
+        # Check critical configuration values
+        if self.config.get('max_planning_time', 0) <= 0:
+            issues.append("max_planning_time must be positive")
+        elif self.config.get('max_planning_time', 0) > 60:
+            warnings.append("max_planning_time is very high (>60s)")
+        
+        if self.config.get('ik_position_tolerance', 0) <= 0:
+            issues.append("ik_position_tolerance must be positive")
+        elif self.config.get('ik_position_tolerance', 0) > 0.01:
+            warnings.append("ik_position_tolerance is high (>10mm)")
+        
+        if not self.config.get('enable_fallbacks', False) and self.production_mode:
+            warnings.append("Fallback strategies disabled in production mode")
+        
+        # Check collision checker
+        collision_issues = []
+        try:
+            test_config = np.zeros(6)
+            test_tcp = np.array([0, 0, 0.8])
+            result = self.collision_checker.check_configuration_collision(test_config, test_tcp)
+            if result.is_collision:
+                collision_issues.append("Home position incorrectly flagged as collision")
+        except Exception as e:
+            collision_issues.append(f"Collision checker error: {e}")
+        
+        # Check kinematic solvers
+        ik_issues = []
+        try:
+            test_pose = np.eye(4)
+            test_pose[:3, 3] = [0.4, 0.0, 0.5]
+            q_solution, ik_success = self.ik.solve(test_pose)
+            if not ik_success:
+                ik_issues.append("Basic IK test failed")
+        except Exception as e:
+            ik_issues.append(f"IK solver error: {e}")
+        
+        return {
+            'configuration_valid': len(issues) == 0,
+            'production_ready': len(issues) == 0 and len(collision_issues) == 0 and len(ik_issues) == 0,
+            'issues': issues,
+            'warnings': warnings,
+            'collision_issues': collision_issues,
+            'ik_issues': ik_issues,
+            'recommendations': self._get_configuration_recommendations(issues, warnings, collision_issues, ik_issues)
+        }
+    
+    def _get_configuration_recommendations(self, issues: List[str], warnings: List[str], 
+                                         collision_issues: List[str], ik_issues: List[str]) -> List[str]:
+        """Get configuration recommendations based on validation results."""
+        recommendations = []
+        
+        if issues:
+            recommendations.append("Fix configuration issues before production deployment")
+        
+        if collision_issues:
+            recommendations.append("Recalibrate collision detection thresholds in constraints.yaml")
+            recommendations.append("Verify robot model and workspace configuration")
+        
+        if ik_issues:
+            recommendations.append("Review IK solver configuration and tolerance settings")
+            recommendations.append("Consider enabling C-space analysis for better convergence")
+        
+        if warnings:
+            recommendations.append("Review configuration warnings for optimal performance")
+        
+        if self.production_mode and not self.config.get('enable_fallbacks', False):
+            recommendations.append("Enable fallback strategies for production robustness")
+        
+        return recommendations
+
+    def enable_cartesian_optimization(self):
+        """Enable optimizations specifically for Cartesian planning performance."""
+        with self._config_lock:
+            # Reduce planning timeouts for faster feedback
+            self.config['max_planning_time'] = 10.0  # Reduced from 30s
+            
+            # Optimize IK tolerances for Cartesian planning
+            self.config['ik_position_tolerance'] = 0.003  # 3mm (relaxed from 2mm)
+            self.config['ik_rotation_tolerance'] = 3.0     # 3 degrees (relaxed from 2°)
+            
+            # Reduce maximum planning attempts
+            self.config['max_attempts'] = 2  # Reduced from 3
+            
+            # Enable C-space analysis if available
+            if not self.cspace_analysis_enabled:
+                self.enable_configuration_space_analysis(build_maps=False)
+        
+        logger.info("Cartesian planning optimizations enabled")
+    
+    def disable_cartesian_optimization(self):
+        """Disable Cartesian-specific optimizations and return to standard settings."""
+        with self._config_lock:
+            # Restore standard timeouts
+            self.config['max_planning_time'] = 30.0
+            
+            # Restore strict IK tolerances
+            self.config['ik_position_tolerance'] = 0.002  # 2mm
+            self.config['ik_rotation_tolerance'] = 2.0     # 2 degrees
+            
+            # Restore maximum planning attempts
+            self.config['max_attempts'] = 3
+        
+        logger.info("Cartesian planning optimizations disabled")
+
     def enable_configuration_space_analysis(self, build_maps=False):
         """Enable C-space analysis for better IK performance."""
         if ConfigurationSpaceAnalyzer is None:
@@ -183,17 +430,37 @@ class MotionPlanner:
             logger.info("Reachability maps built and cached")
     
     def solve_ik_with_cspace(self, target_pose: np.ndarray, q_current: Optional[np.ndarray] = None) -> Tuple[Optional[np.ndarray], bool]:
-        """Solve IK with C-space optimization if available, with multiple initial guess fallbacks."""
+        """Solve IK with C-space optimization if available, with optimized parameters for Cartesian planning."""
         if self.cspace_analysis_enabled and self.config_analyzer:
             # Get optimal seed from C-space analysis
             target_position = target_pose[:3, 3]
             q_seed = self.config_analyzer.get_best_ik_region(target_position)
             if q_seed is not None:
-                q_solution, converged = self.ik.solve(target_pose, q_init=q_seed)
+                # Use fast IK parameters for C-space seeded attempts
+                fast_params = {
+                    'max_iters': 150,      # Reduced from 600
+                    'num_attempts': 1,     # Single attempt with good seed
+                    'pos_tol': 2e-3,       # Slightly relaxed tolerance
+                    'rot_tol': 5e-3        # Slightly relaxed tolerance
+                }
+                q_solution, converged = self.ik.solve(target_pose, q_init=q_seed, **fast_params)
                 if converged:
                     return q_solution, True
         
-        # Try multiple initial guesses for better success rate
+        # Fast IK parameters for Cartesian planning
+        fast_ik_params = {
+            'max_iters': 200,          # Reduced from 600
+            'num_attempts': 12,        # Reduced from 100  
+            'pos_tol': 2e-3,           # Relaxed from 8e-4 (2mm tolerance)
+            'rot_tol': 5e-3,           # Relaxed from 2e-3 (0.3° tolerance)
+            'damping': 5e-4,           # Increased damping for stability
+            'step_scale': 0.7,         # Larger steps for faster convergence
+            'combined_tolerance': 3e-3, # More permissive combined tolerance
+            'smart_seeding': True,
+            'adaptive_tolerance': True
+        }
+        
+        # Try multiple strategic initial guesses with fast parameters
         initial_guesses = [
             q_current if q_current is not None else np.zeros(6),  # Current or zero
             np.array([0, -np.pi/2, np.pi/2, 0, np.pi/2, 0]),     # Home position
@@ -201,14 +468,11 @@ class MotionPlanner:
             np.array([-np.pi/4, -np.pi/4, np.pi/4, 0, np.pi/4, -np.pi/4]), # Alternative 2
             np.array([0, 0, 0, 0, 0, 0]),                         # Zero position
             np.array([np.pi/6, -np.pi/4, np.pi/4, np.pi/6, np.pi/4, 0]),  # Conservative pose
-            np.random.uniform(-np.pi, np.pi, 6),                  # Random guess 1
-            np.random.uniform(-np.pi, np.pi, 6),                  # Random guess 2
-            np.random.uniform(-np.pi, np.pi, 6),                  # Random guess 3
         ]
         
         for i, q_init in enumerate(initial_guesses):
             try:
-                q_solution, converged = self.ik.solve(target_pose, q_init=q_init)
+                q_solution, converged = self.ik.solve(target_pose, q_init=q_init, **fast_ik_params)
                 if converged:
                     if i > 0:  # Log when fallback was needed
                         logger.info(f"IK converged using initial guess #{i+1}")
@@ -217,8 +481,106 @@ class MotionPlanner:
                 logger.debug(f"IK attempt {i+1} failed: {e}")
                 continue
         
+        # If all strategic guesses fail, try a few random attempts with even faster parameters
+        emergency_params = {
+            'max_iters': 100,          # Very fast
+            'num_attempts': 3,         # Only 3 random attempts
+            'pos_tol': 5e-3,           # More relaxed (5mm)
+            'rot_tol': 1e-2,           # More relaxed (0.6°)
+            'damping': 1e-3,           # Higher damping
+            'step_scale': 0.8          # Larger steps
+        }
+        
+        for attempt in range(3):
+            try:
+                q_random = np.random.uniform(-np.pi, np.pi, 6)
+                q_solution, converged = self.ik.solve(target_pose, q_init=q_random, **emergency_params)
+                if converged:
+                    logger.info(f"IK converged using emergency random seed #{attempt+1}")
+                    return q_solution, True
+            except Exception as e:
+                logger.debug(f"Emergency IK attempt {attempt+1} failed: {e}")
+                continue
+        
         # All attempts failed
         return None, False
+    
+    def _optimize_joint_continuity(self, q_start: np.ndarray, q_goal: np.ndarray, 
+                                 goal_pose: np.ndarray) -> Tuple[np.ndarray, bool]:
+        """
+        Optimize joint continuity by finding alternative IK solutions with smaller joint jumps.
+        
+        Args:
+            q_start: Starting joint configuration
+            q_goal: Current goal joint configuration
+            goal_pose: Target Cartesian pose
+            
+        Returns:
+            Optimized goal configuration and success flag
+        """
+        initial_jump = np.linalg.norm(q_goal - q_start)
+        
+        # If jump is reasonable, return as-is
+        if initial_jump <= np.pi:
+            return q_goal, True
+        
+        logger.info(f"Large joint jump detected ({initial_jump:.3f} rad), optimizing continuity...")
+        
+        # Try to find alternative IK solutions with better continuity
+        best_q = q_goal
+        best_jump = initial_jump
+        
+        # Generate IK seeds based on the start configuration
+        continuity_seeds = [
+            q_start,  # Start from current position
+            q_start + 0.1 * np.random.randn(6),  # Small perturbation 1
+            q_start + 0.2 * np.random.randn(6),  # Small perturbation 2
+            q_start + 0.3 * np.random.randn(6),  # Medium perturbation
+        ]
+        
+        # Add strategic joint modifications (handling joint wrapping)
+        for i in range(6):
+            # Try adding/subtracting 2π to each joint
+            q_mod = q_goal.copy()
+            if q_mod[i] - q_start[i] > np.pi:
+                q_mod[i] -= 2*np.pi
+                continuity_seeds.append(q_mod.copy())
+            elif q_start[i] - q_mod[i] > np.pi:
+                q_mod[i] += 2*np.pi
+                continuity_seeds.append(q_mod.copy())
+        
+        # Fast IK parameters for continuity optimization
+        continuity_params = {
+            'max_iters': 100,      # Fast iterations
+            'num_attempts': 3,     # Few attempts per seed
+            'pos_tol': 3e-3,       # Slightly relaxed (3mm)
+            'rot_tol': 8e-3,       # Slightly relaxed (0.5°)
+        }
+        
+        for seed in continuity_seeds:
+            try:
+                q_candidate, converged = self.ik.solve(goal_pose, q_init=seed, **continuity_params)
+                if converged:
+                    jump = np.linalg.norm(q_candidate - q_start)
+                    if jump < best_jump:
+                        best_q = q_candidate
+                        best_jump = jump
+                        
+                        # Early exit if we find a good solution
+                        if jump <= np.pi:
+                            logger.info(f"Continuity optimized: {initial_jump:.3f} → {jump:.3f} rad")
+                            return best_q, True
+            except Exception as e:
+                logger.debug(f"Continuity optimization attempt failed: {e}")
+                continue
+        
+        # Return best found solution
+        if best_jump < initial_jump:
+            logger.info(f"Continuity improved: {initial_jump:.3f} → {best_jump:.3f} rad")
+            return best_q, True
+        else:
+            logger.warning(f"Could not improve continuity, keeping original solution")
+            return q_goal, False
     
     def plan_motion(self, start_config: np.ndarray, goal_config: np.ndarray,
                    strategy: Optional[PlanningStrategy] = None,
@@ -302,15 +664,47 @@ class MotionPlanner:
                 if self.progress_callback and progress_enabled:
                     status_msg = "Motion planning completed" if result.status == PlanningStatus.SUCCESS else "Motion planning failed"
                     self.progress_callback(100.0, status_msg)
+                
+                # Production logging
+                planning_time = time.time() - start_time
+                if result.status == PlanningStatus.SUCCESS and result.plan:
+                    self._log_success(result.plan, planning_time)
+                    with self._stats_lock:
+                        self.stats['successful_plans'] += 1
+                else:
+                    error_context = {
+                        'strategy': strategy.value if strategy else 'unknown',
+                        'waypoint_count': waypoint_count,
+                        'start_config_shape': start_config.shape,
+                        'goal_config_shape': goal_config.shape
+                    }
+                    self._log_error(result.status.value, result.error_message or "Unknown planning failure", error_context)
+                    with self._stats_lock:
+                        self.stats['failed_plans'] += 1
             
                 return result
                 
             except Exception as e:
+                planning_time = time.time() - start_time
+                error_message = f"Planning exception: {str(e)}"
+                
+                # Production error logging
+                error_context = {
+                    'strategy': strategy.value if strategy else 'unknown',
+                    'waypoint_count': waypoint_count,
+                    'exception_type': type(e).__name__,
+                    'planning_time': planning_time
+                }
+                self._log_error("EXCEPTION", error_message, error_context)
+                
+                with self._stats_lock:
+                    self.stats['failed_plans'] += 1
+                
                 logger.error(f"Motion planning failed with exception: {e}")
                 return MotionPlanningResult(
                     status=PlanningStatus.FAILED,
-                    error_message=f"Planning exception: {str(e)}",
-                    planning_time=time.time() - start_time
+                    error_message=error_message,
+                    planning_time=planning_time
                 )
     
     def plan_cartesian_motion(self, start_pose: np.ndarray, goal_pose: np.ndarray,
@@ -332,6 +726,9 @@ class MotionPlanner:
         """
         with self._planning_lock:
             start_time = time.time()
+            
+            # Enable Cartesian-specific optimizations
+            self.enable_cartesian_optimization()
         
             try:
                 # STEP 1: Determine initial guess based on robot state
@@ -344,8 +741,15 @@ class MotionPlanner:
                     q_init_start = np.array([0, -np.pi/2, np.pi/2, 0, np.pi/2, 0])  # Home position
                     logger.info("Using home position as initial guess (current robot state unknown)")
                 
-                # STEP 2: Solve IK for start pose from current/initial state
-                q_start, start_converged = self.ik.solve(start_pose, q_init=q_init_start)
+                # STEP 2: Solve IK for start pose from current/initial state with fast parameters
+                fast_ik_params = {
+                    'max_iters': 200,      # Reduced iterations
+                    'num_attempts': 8,     # Reduced attempts
+                    'pos_tol': 2e-3,       # 2mm tolerance
+                    'rot_tol': 5e-3,       # 0.3° tolerance
+                }
+                
+                q_start, start_converged = self.ik.solve(start_pose, q_init=q_init_start, **fast_ik_params)
                 if not start_converged:
                     # Try fallback initial guesses only if primary method fails
                     logger.warning("Primary IK for start pose failed, trying fallback initial guesses")
@@ -358,17 +762,24 @@ class MotionPlanner:
                         )
                 
                 # STEP 3: Solve IK for goal pose using start pose joints as initial guess (continuity!)
-                q_goal, goal_converged = self.ik.solve(goal_pose, q_init=q_start)
+                q_goal, goal_converged = self.ik.solve(goal_pose, q_init=q_start, **fast_ik_params)
                 if not goal_converged:
                     # Try fallback initial guesses only if continuous method fails
                     logger.warning("Continuous IK for goal pose failed, trying fallback initial guesses")
                     q_goal, goal_converged = self.solve_ik_with_cspace(goal_pose, q_current=q_start)
                     if not goal_converged:
-                        # Final fallback: try with multiple random seeds
+                        # Final fallback: try with multiple random seeds using fast parameters
                         logger.warning("All standard IK methods failed, trying aggressive fallback")
-                        for attempt in range(10):
+                        emergency_params = {
+                            'max_iters': 100,  # Very fast
+                            'num_attempts': 5, # Only 5 random attempts
+                            'pos_tol': 5e-3,   # More relaxed (5mm)
+                            'rot_tol': 1e-2,   # More relaxed (0.6°)
+                        }
+                        
+                        for attempt in range(5):
                             q_random = np.random.uniform(-np.pi, np.pi, 6)
-                            q_try, converged = self.ik.solve(goal_pose, q_init=q_random)
+                            q_try, converged = self.ik.solve(goal_pose, q_init=q_random, **emergency_params)
                             if converged:
                                 q_goal = q_try
                                 goal_converged = True
@@ -382,12 +793,25 @@ class MotionPlanner:
                                 planning_time=time.time() - start_time
                             )
                 
-                # STEP 4: Validate joint space continuity
+                # STEP 4: Optimize joint space continuity
+                q_goal, continuity_improved = self._optimize_joint_continuity(q_start, q_goal, goal_pose)
+                
+                # STEP 5: Validate final joint space continuity
                 joint_diff = np.linalg.norm(q_goal - q_start)
                 if joint_diff > np.pi:  # Large joint space jump
                     logger.warning(f"Large joint space jump detected: {joint_diff:.3f} rad")
+                    
+                    # If still a large jump, try one more optimization round
+                    if joint_diff > 2*np.pi:
+                        logger.warning("Extremely large jump detected, attempting final optimization")
+                        q_goal_opt, _ = self._optimize_joint_continuity(q_start, q_goal, goal_pose)
+                        final_diff = np.linalg.norm(q_goal_opt - q_start)
+                        if final_diff < joint_diff:
+                            q_goal = q_goal_opt
+                            joint_diff = final_diff
+                            logger.info(f"Final optimization reduced jump to {joint_diff:.3f} rad")
                 
-                # STEP 5: Plan smooth motion in joint space
+                # STEP 6: Plan smooth motion in joint space
                 result = self.plan_motion(
                     q_start, q_goal, 
                     strategy=PlanningStrategy.CARTESIAN_SPACE,
@@ -402,10 +826,16 @@ class MotionPlanner:
                         cartesian_waypoints.append(T)
                 
                     result.plan.cartesian_waypoints = cartesian_waypoints
+                
+                # Disable Cartesian optimizations before returning
+                self.disable_cartesian_optimization()
             
                 return result
             
             except Exception as e:
+                # Disable Cartesian optimizations before returning error
+                self.disable_cartesian_optimization()
+                
                 return MotionPlanningResult(
                     status=PlanningStatus.FAILED,
                     error_message=f"Cartesian planning failed: {str(e)}",

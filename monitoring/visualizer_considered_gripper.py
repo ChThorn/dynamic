@@ -49,13 +49,8 @@ class AdvancedPoseVisualizer:
     This tool is part of the monitoring package for the robot motion planning system.
     It provides an interactive interface for defining TCP poses that can be used
     with the motion planning system.
-    
-    New Features:
-    - Gripper/TCP mode selection for intuitive positioning
-    - Automatic gripper offset handling (85mm)
-    - Real-time mode switching with visual feedback
     """
-    def __init__(self, calibration_path: str = None, mode: str = "tcp"):
+    def __init__(self, calibration_path: str = None):
         # Default to local calibration data if no path provided
         if calibration_path is None:
             # Use local calibration data in monitoring package
@@ -75,8 +70,8 @@ class AdvancedPoseVisualizer:
         self.robot_poses = []
         self.orientation_mode = "downward"  # Default to downward for pick and place operations
         
-        # Gripper mode configuration
-        self.gripper_mode = mode == "gripper"  # True for gripper mode, False for TCP mode
+        # Gripper mode settings
+        self.gripper_mode = False  # False = TCP mode, True = Gripper mode
         self.gripper_offset = 0.085  # 85mm gripper offset in meters
 
         # Setup plot
@@ -101,9 +96,13 @@ class AdvancedPoseVisualizer:
         self._create_markers()
         self._create_text_boxes()
         self._create_rotation_sliders() # NEW
+        self._create_gripper_mode_toggle() # NEW: Gripper mode control
         self._connect_events()
         self._draw_static_elements()
         self._create_legend()
+        
+        # Initialize plot titles
+        self._update_plot_titles()
         
         logger.info("Advanced Pick & Place Pose Visualizer with workspace constraints initialized.")
 
@@ -297,10 +296,27 @@ class AdvancedPoseVisualizer:
         
         for label, key, pos in zip(labels, keys, positions):
             ax_slider = self.fig.add_axes(pos)
-            slider = Slider(ax=ax_slider, label=label, valmin=-180, valmax=180, valinit=0)
+            slider = Slider(ax_slider, label, -180, 180, valinit=0, valfmt='%0.1f°')
             slider.on_changed(self._update_rotation_from_sliders)
-            slider.ax.set_visible(False) # Initially hidden
             self.sliders[key] = slider
+            ax_slider.set_visible(False)  # Start hidden
+
+    def _create_gripper_mode_toggle(self):
+        """Create gripper/TCP mode toggle button."""
+        from matplotlib.widgets import Button
+        
+        # Position button in bottom right area
+        ax_button = self.fig.add_axes([0.85, 0.02, 0.12, 0.04])
+        self.gripper_button = Button(ax_button, 'TCP Mode')
+        self.gripper_button.on_clicked(self._toggle_gripper_mode)
+        
+        # Style the button
+        ax_button.set_facecolor('lightblue')
+        
+        # Create mode indicator text
+        self.mode_text = self.fig.text(0.85, 0.08, 'Mode: TCP (Tool Center Point)', 
+                                      fontsize=10, ha='left', va='bottom',
+                                      bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.7))
 
     def _connect_events(self):
         self.fig.canvas.mpl_connect('button_press_event', self.on_click)
@@ -359,19 +375,42 @@ class AdvancedPoseVisualizer:
             if self.preview_point_visible:
                 self._set_initial_orientation()
                 self._update_pose_preview()
+        elif event.key == 'g':  # NEW: 'g' key to toggle gripper mode
+            self._toggle_gripper_mode()
         elif event.key == 'q': plt.close('all')
 
     def finalize_pose(self):
         """Uses the final position and orientation to generate and store the robot pose."""
         pos = np.array([self.coords['x'], self.coords['y'], self.coords['z']])
         rot_vec = R.from_euler('xyz', [self.orientation_rpy['roll'], self.orientation_rpy['pitch'], self.orientation_rpy['yaw']]).as_rotvec()
-        tcp_pose = np.concatenate([pos, rot_vec])
+        
+        # Store gripper coordinates for export
+        if self.gripper_mode:
+            self._last_gripper_coords = pos.copy()
+        
+        # Convert gripper coordinates to TCP coordinates if in gripper mode
+        if self.gripper_mode:
+            tcp_pose = self._convert_gripper_to_tcp(pos, rot_vec)
+        else:
+            tcp_pose = np.concatenate([pos, rot_vec])
         
         self.robot_poses.append(tcp_pose)
         self._draw_final_pose(tcp_pose, len(self.robot_poses))
         self.print_pose_info(len(self.robot_poses), tcp_pose)
         self._reset_state()
         self.fig.canvas.draw_idle()
+    
+    def _convert_gripper_to_tcp(self, gripper_pos, rot_vec):
+        """Convert gripper position to TCP position by applying offset."""
+        # Create rotation matrix from rotation vector
+        rotation_matrix = R.from_rotvec(rot_vec).as_matrix()
+        
+        # Apply offset along the Z-axis of the gripper (TCP is 85mm behind gripper tip)
+        # In gripper frame: Z-axis points downward, so TCP is +Z from gripper tip
+        gripper_z_axis = rotation_matrix[:, 2]  # Z-axis of gripper frame
+        tcp_position = gripper_pos + self.gripper_offset * gripper_z_axis
+        
+        return np.concatenate([tcp_position, rot_vec])
 
     def _update_pose_preview(self):
         """Updates all preview elements: 2D markers, 3D point, and 3D orientation frame."""
@@ -420,6 +459,40 @@ class AdvancedPoseVisualizer:
         self.sliders['roll'].set_val(np.degrees(rpy_rad[0]))
         self.sliders['pitch'].set_val(np.degrees(rpy_rad[1]))
         self.sliders['yaw'].set_val(np.degrees(rpy_rad[2]))
+        
+    def _toggle_gripper_mode(self, event=None):
+        """Toggle between TCP and Gripper modes."""
+        self.gripper_mode = not self.gripper_mode
+        
+        if self.gripper_mode:
+            self.gripper_button.label.set_text('Gripper Mode')
+            self.gripper_button.ax.set_facecolor('lightgreen')
+            self.mode_text.set_text('Mode: GRIPPER (Gripper Tip Position)\nAutomatic 85mm offset applied')
+            mode_type = "gripper tip positioning"
+        else:
+            self.gripper_button.label.set_text('TCP Mode')
+            self.gripper_button.ax.set_facecolor('lightblue')
+            self.mode_text.set_text('Mode: TCP (Tool Center Point)')
+            mode_type = "TCP positioning"
+        
+        logger.info(f"Switched to {mode_type} mode")
+        
+        # Update plot titles to reflect current mode
+        self._update_plot_titles()
+        
+        # If preview is visible, update it with new coordinates
+        if self.preview_point_visible:
+            self._update_pose_preview()
+        
+        self.fig.canvas.draw_idle()
+    
+    def _update_plot_titles(self):
+        """Update plot titles based on current mode."""
+        mode_suffix = " (Gripper)" if self.gripper_mode else " (TCP)"
+        
+        self.ax_3d.set_title(f"3. {self.robot_model} Workspace{mode_suffix} - Press 'Enter' to finalize")
+        self.ax_xy.set_title(f"1. Click/Drag to set X-Y Position{mode_suffix}")
+        self.ax_yz.set_title(f"2. Click/Drag to set Y-Z Position{mode_suffix}")
         
     def _toggle_sliders(self, visible):
         """Shows or hides the rotation sliders."""
@@ -750,8 +823,18 @@ class AdvancedPoseVisualizer:
 
     def print_pose_info(self, pose_number, tcp_pose):
         mode_desc = "Pick/Place (downward)" if self.orientation_mode == "downward" else "View-aligned"
-        print(f"\n--- Gripper Pose #{pose_number} [{mode_desc}] ---")
-        print(f"Position (mm): [X={tcp_pose[0]*1000:.1f}, Y={tcp_pose[1]*1000:.1f}, Z={tcp_pose[2]*1000:.1f}]")
+        coord_mode = "Gripper Mode" if self.gripper_mode else "TCP Mode"
+        
+        print(f"\n--- Pose #{pose_number} [{mode_desc}, {coord_mode}] ---")
+        
+        if self.gripper_mode:
+            # Show both gripper coordinates (input) and TCP coordinates (output)
+            gripper_pos = np.array([self.coords['x'], self.coords['y'], self.coords['z']])
+            print(f"Gripper Position (mm): [X={gripper_pos[0]*1000:.1f}, Y={gripper_pos[1]*1000:.1f}, Z={gripper_pos[2]*1000:.1f}]")
+            print(f"TCP Position (mm):     [X={tcp_pose[0]*1000:.1f}, Y={tcp_pose[1]*1000:.1f}, Z={tcp_pose[2]*1000:.1f}] (auto-calculated)")
+        else:
+            print(f"TCP Position (mm): [X={tcp_pose[0]*1000:.1f}, Y={tcp_pose[1]*1000:.1f}, Z={tcp_pose[2]*1000:.1f}]")
+        
         rpy_deg = np.degrees(R.from_rotvec(tcp_pose[3:]).as_euler('xyz'))
         print(f"Rotation (deg): [Roll={rpy_deg[0]:.1f}, Pitch={rpy_deg[1]:.1f}, Yaw={rpy_deg[2]:.1f}]")
         
@@ -763,16 +846,25 @@ class AdvancedPoseVisualizer:
             "application": "pick_and_place",
             "robot_model": self.robot_model,
             "workspace_constraints": self.workspace_limits,
+            "coordinate_mode": "gripper" if self.gripper_mode else "tcp",
+            "gripper_offset_mm": self.gripper_offset * 1000 if self.gripper_mode else 0,
             "poses": []
         }
         for i, pose in enumerate(self.robot_poses):
             rpy_deg = np.degrees(R.from_rotvec(pose[3:]).as_euler('xyz'))
-            data["poses"].append({
+            pose_data = {
                 "pose_number": i+1, 
-                "gripper_position_mm": [round(p,1) for p in (pose[:3]*1000).tolist()],
-                "gripper_rotation_rpy_deg": [round(r,1) for r in rpy_deg],
-                "orientation_mode": "downward_pick_place"
-            })
+                "tcp_position_mm": [round(p,1) for p in (pose[:3]*1000).tolist()],
+                "tcp_rotation_rpy_deg": [round(r,1) for r in rpy_deg],
+                "orientation_mode": self.orientation_mode,
+                "coordinate_mode": "gripper" if self.gripper_mode else "tcp"
+            }
+            
+            # Add gripper coordinates if in gripper mode
+            if self.gripper_mode and hasattr(self, '_last_gripper_coords'):
+                pose_data["gripper_position_mm"] = [round(p,1) for p in (self._last_gripper_coords * 1000).tolist()]
+            
+            data["poses"].append(pose_data)
         with open(filename, 'w') as f: json.dump(data, f, indent=2)
         logger.info(f"Exported {len(self.robot_poses)} pick & place poses to {filename}")
     
@@ -791,13 +883,19 @@ class AdvancedPoseVisualizer:
         logger.info("All poses cleared")
     
     def run(self):
-        print("\n" + "="*60 + "\nADVANCED 3D INTERACTIVE ROBOT POSE CONTROL\n" + "="*60 + "\nCONTROLS:")
+        print("\n" + "="*70 + "\nADVANCED 3D INTERACTIVE ROBOT POSE CONTROL\n" + "="*70 + "\nCONTROLS:")
         print("  • Click/Drag on 2D plots to set POSITION.")
         print("  • Use sliders at the bottom to set ORIENTATION.")
         print("  • Press 'e' to show/hide text boxes for precise position.")
+        print("  • Press 'g' to toggle Gripper/TCP mode.")
+        print("  • Click button or press 'g' to switch between modes.")
         print("  • Press 'Enter' to finalize the pose.")
         print("  • Press 'o' to toggle initial orientation mode.")
-        print("  • Press 'q' to quit.\n" + "="*60)
+        print("  • Press 'q' to quit.")
+        print("\nMODES:")
+        print("  🤖 TCP Mode: Position robot Tool Center Point directly")
+        print("  🦾 Gripper Mode: Position gripper tip (85mm offset auto-applied)")
+        print("="*70)
         try: plt.show()
         except KeyboardInterrupt: print("\nExiting...")
         finally:
