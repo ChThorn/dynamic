@@ -30,6 +30,36 @@ from forward_kinematic import ForwardKinematics
 from inverse_kinematic import InverseKinematics
 
 
+def solve_ik_robust(ik, T_target):
+    """
+    Clean, minimal, robust IK solver for small object manipulation.
+    
+    Args:
+        ik: InverseKinematics solver
+        T_target: Target transformation matrix
+    
+    Returns:
+        (q_solution, converged): Joint solution and success flag
+    """
+    
+    # Standard initial guess - proven reliable
+    standard_guess = np.deg2rad([0, -30, 60, 0, 45, 0])
+    
+    q_solution, converged = ik.solve(T_target, q_init=standard_guess)
+    
+    if converged:
+        # Verify accuracy
+        T_achieved = ik.fk.compute_forward_kinematics(q_solution)
+        error = np.linalg.norm(T_achieved[:3, 3] - T_target[:3, 3])
+        
+        if error < 0.002:  # 2mm tolerance
+            return q_solution, True
+    
+    # Single fallback: home configuration
+    q_solution, converged = ik.solve(T_target, q_init=np.zeros(6))
+    return q_solution, converged
+
+
 def analyze_small_object_grasping():
     """
     Analyze how to properly grasp small objects on the wood surface.
@@ -210,11 +240,8 @@ def demonstrate_realistic_pick_and_place():
         T_target = np.eye(4)
         T_target[:3, 3] = np.array(gripper_pos) / 1000
         
-        # Use previous position as initial guess
-        q_init = trajectory_points[-1] if trajectory_points else np.deg2rad([0, -30, 60, 0, 45, 0])
-        
-        # Solve IK
-        q_solution, converged = ik.solve(T_target, q_init=q_init)
+        # FIXED: Use robust initial guess strategy
+        q_solution, converged = solve_ik_robust(ik, T_target)
         
         if converged:
             # Verify result
