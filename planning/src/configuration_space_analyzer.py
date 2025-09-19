@@ -58,7 +58,7 @@ class ConfigurationSpaceAnalyzer:
         
         Args:
             forward_kinematics: ForwardKinematics instance
-            inverse_kinematics: InverseKinematics instance
+            inverse_kinematics: FastIK instance
             cache_dir: Directory for caching reachability maps
         """
         self.fk = forward_kinematics
@@ -272,15 +272,16 @@ class ConfigurationSpaceAnalyzer:
     def _generate_workspace_samples(self, num_samples: int) -> List[np.ndarray]:
         """Generate sample points in the robot's workspace with improved distribution."""
         # Define workspace bounds based on RB3-730ES-U specifications
-        x_range = (-0.7, 0.7)   # meters (conservative for 730mm reach)
-        y_range = (-0.7, 0.7)   # meters  
-        z_range = (0.1, 1.0)    # meters (above table surface, realistic height)
+        # UPDATED: Extended bounds to support 700-750mm reach (was 700mm)
+        x_range = (-0.75, 0.75)   # meters (extended for up to 750mm reach)
+        y_range = (-0.75, 0.75)   # meters (extended for up to 750mm reach)
+        z_range = (0.08, 1.0)     # meters (lowered minimum to 80mm for extended reach)
         
         samples = []
         
-        # Generate samples using mixed strategy for better coverage
-        uniform_samples = int(num_samples * 0.6)  # 60% uniform distribution
-        focused_samples = int(num_samples * 0.4)  # 40% focused on common work areas
+        # Generate samples using mixed strategy optimized for 700mm extended reach
+        uniform_samples = int(num_samples * 0.5)  # 50% uniform (reduced from 60%)
+        focused_samples = int(num_samples * 0.5)  # 50% focused on extended reach (increased from 40%)
         
         # 1. Uniform random sampling
         for _ in range(uniform_samples):
@@ -289,15 +290,16 @@ class ConfigurationSpaceAnalyzer:
             z = np.random.uniform(*z_range)
             samples.append(np.array([x, y, z]))
         
-        # 2. Focused sampling on typical work areas
+        # 2. Focused sampling optimized for 650-720mm extended reach
         work_zones = [
-            # Front center zone (most common)
-            {'center': [0.4, 0.0, 0.5], 'radius': 0.15, 'weight': 0.4},
-            # Right side zone
-            {'center': [0.2, 0.3, 0.4], 'radius': 0.12, 'weight': 0.25},
-            # Left side zone  
-            {'center': [0.2, -0.3, 0.4], 'radius': 0.12, 'weight': 0.25},
-            # High reach zone
+            # Extended front zone (650-700mm reach) - HIGHEST PRIORITY
+            {'center': [0.68, 0.0, 0.20], 'radius': 0.12, 'weight': 0.35},
+            # Near-maximum zone (600-650mm reach)
+            {'center': [0.62, 0.0, 0.25], 'radius': 0.15, 'weight': 0.25},
+            # Diagonal extended zones for 650mm+ reach
+            {'center': [0.48, 0.48, 0.22], 'radius': 0.12, 'weight': 0.15},
+            {'center': [0.48, -0.48, 0.22], 'radius': 0.12, 'weight': 0.15},
+            # High reach zone (maintain existing coverage)
             {'center': [0.3, 0.0, 0.8], 'radius': 0.1, 'weight': 0.1}
         ]
         

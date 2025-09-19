@@ -34,11 +34,11 @@ def comprehensive_test():
     # Import and initialize
     logger.info("Initializing system...")
     from forward_kinematic import ForwardKinematics
-    from inverse_kinematic import InverseKinematics
+    from inverse_kinematic import FastIK
     from motion_planner import MotionPlanner, PlanningStrategy, PlanningStatus
     
     fk = ForwardKinematics()
-    ik = InverseKinematics(fk)
+    ik = FastIK(fk)
     planner = MotionPlanner(fk, ik)
     
     logger.info("✅ System initialized successfully")

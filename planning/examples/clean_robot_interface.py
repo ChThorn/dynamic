@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'kinemati
 
 try:
     from forward_kinematic import ForwardKinematics
-    from inverse_kinematic import InverseKinematics
+    from inverse_kinematic import FastIK
     from motion_planner import MotionPlanner, PlanningStatus, PlanningStrategy
 except ImportError as e:
     print(f"Import error: {e}")
@@ -135,7 +135,7 @@ class CleanRobotMotionPlanner:
     def __init__(self):
         """Initialize motion planning system."""
         self.fk = ForwardKinematics()
-        self.ik = InverseKinematics(self.fk)
+        self.ik = FastIK(self.fk)
         self.motion_planner = MotionPlanner(self.fk, self.ik)
     
     def get_current_pose_from_joints(self, joints_deg: List[float]) -> RobotPose:

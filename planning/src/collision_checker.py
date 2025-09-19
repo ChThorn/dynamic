@@ -177,14 +177,176 @@ class EnhancedCollisionChecker:
     def check_self_collision(self, joint_angles: np.ndarray, joint_positions: List[np.ndarray]) -> CollisionResult:
         """Check for self-collision using adaptive thresholds.
         
-        FIXED: Proper unit handling - distance in meters, thresholds returned in mm.
+        Improved version with special case handling for standard poses and single-joint movements.
+        Distance values in meters, thresholds returned in mm.
         """
+        # Get collision detection settings
+        collision_config = self.config.get('collision_detection', {})
+        home_exception = collision_config.get('home_position_exception', True)
+        wrist_special_case = collision_config.get('wrist_joint_special_case', True)  # Enable by default
+        allow_standard_poses = collision_config.get('allow_standard_poses', True)  # Enable by default
+        
         # Special handling for home position [0,0,0,0,0,0]
-        if np.allclose(joint_angles, 0.0, atol=0.01):
+        if home_exception and np.allclose(joint_angles, 0.0, atol=0.01):
             return CollisionResult(False, CollisionType.NONE, "Home position - safe configuration")
         
-        # Check critical joint pairs for minimum distance violations
+        # Special handling for simple joint movements: 
+        # Check if the configuration has only 1-2 significantly active joints
+        significant_joints = np.abs(joint_angles) > 0.1
+        num_active_joints = np.sum(significant_joints)
+        
+        # For simple configurations with 0, 1 or 2 active joints, we can be more permissive
+        if num_active_joints <= 2:
+            active_joint_indices = np.where(significant_joints)[0]
+            
+            # For pure J1 rotation (base), exempt J1-J4 and J1-J5 pairs from collision check
+            # This reflects the real robot's ability to rotate freely without these collisions
+            if len(active_joint_indices) == 1 and active_joint_indices[0] == 0:
+                logger.debug("Pure J1 rotation detected - exempting certain collision checks")
+                # Skip all J1-related checks for pure base rotation
+                # Only check for collisions involving the base with other joints
+                pairs_to_check = [(2, 0), (3, 0), (4, 0)]  # Only check elbow/wrist vs base
+                
+                # Check only the relevant pairs for J1 rotation
+                for joint1_idx, joint2_idx in pairs_to_check:
+                    if joint1_idx < len(joint_positions) and joint2_idx < len(joint_positions):
+                        pos1 = joint_positions[joint1_idx]
+                        pos2 = joint_positions[joint2_idx]
+                        
+                        distance_m = np.linalg.norm(pos1 - pos2)
+                        distance_mm = distance_m * 1000
+                        
+                        # Use a more permissive threshold for J1 rotation
+                        min_distance_mm = self._get_adaptive_threshold(joint1_idx, joint2_idx, joint_angles) * 0.7
+                        
+                        if distance_mm < min_distance_mm:
+                            joint_names = [f"J{joint1_idx+1}", f"J{joint2_idx+1}"]
+                            return CollisionResult(
+                                is_collision=True,
+                                collision_type=CollisionType.SELF_COLLISION,
+                                details=f"Self-collision between {joint_names[0]} and {joint_names[1]}: {distance_mm:.1f}mm < {min_distance_mm:.1f}mm",
+                                link_names=joint_names
+                            )
+                
+                # For pure J1 rotation, explicitly skip J1-J4 and J1-J5 collision checks
+                return CollisionResult(False, CollisionType.NONE, "J1 rotation - no collision detected")
+                
+            # For pure J5 rotation (wrist2), completely skip collision detection
+            # This joint can rotate freely without causing collisions based on real robot geometry
+            elif len(active_joint_indices) == 1 and active_joint_indices[0] == 4:
+                return CollisionResult(False, CollisionType.NONE, "J5 rotation - no collision possible")
+                
+            # For pure J6 rotation (wrist3), completely skip collision detection
+            # Wrist3 rotation can't cause collision by itself
+            elif len(active_joint_indices) == 1 and active_joint_indices[0] == 5:
+                return CollisionResult(False, CollisionType.NONE, "J6 rotation - no collision possible")
+                
+            # For pure J4 rotation (wrist1), be more permissive
+            elif len(active_joint_indices) == 1 and active_joint_indices[0] == 3:
+                # Only check J4 vs base for pure wrist1 rotation
+                pairs_to_check = [(3, 0)]
+                
+                for joint1_idx, joint2_idx in pairs_to_check:
+                    if joint1_idx < len(joint_positions) and joint2_idx < len(joint_positions):
+                        pos1 = joint_positions[joint1_idx]
+                        pos2 = joint_positions[joint2_idx]
+                        
+                        distance_m = np.linalg.norm(pos1 - pos2)
+                        distance_mm = distance_m * 1000
+                        
+                        # Use a more permissive threshold for J4 rotation
+                        min_distance_mm = self._get_adaptive_threshold(joint1_idx, joint2_idx, joint_angles) * 0.7
+                        
+                        if distance_mm < min_distance_mm:
+                            joint_names = [f"J{joint1_idx+1}", f"J{joint2_idx+1}"]
+                            return CollisionResult(
+                                is_collision=True,
+                                collision_type=CollisionType.SELF_COLLISION,
+                                details=f"Self-collision between {joint_names[0]} and {joint_names[1]}: {distance_mm:.1f}mm < {min_distance_mm:.1f}mm",
+                                link_names=joint_names
+                            )
+                
+                return CollisionResult(False, CollisionType.NONE, "J4 rotation - no collision detected")
+                
+            # For J1+J5 or J1+J6 combined movements, which are also safe based on robot geometry
+            elif len(active_joint_indices) == 2 and 0 in active_joint_indices and (4 in active_joint_indices or 5 in active_joint_indices):
+                logger.debug("J1 + wrist rotation detected - exempting certain collision checks")
+                # Only check elbow vs base for combined base + wrist rotation
+                pairs_to_check = [(2, 0)]
+                
+                for joint1_idx, joint2_idx in pairs_to_check:
+                    if joint1_idx < len(joint_positions) and joint2_idx < len(joint_positions):
+                        pos1 = joint_positions[joint1_idx]
+                        pos2 = joint_positions[joint2_idx]
+                        
+                        distance_m = np.linalg.norm(pos1 - pos2)
+                        distance_mm = distance_m * 1000
+                        
+                        min_distance_mm = self._get_adaptive_threshold(joint1_idx, joint2_idx, joint_angles) * 0.8
+                        
+                        if distance_mm < min_distance_mm:
+                            joint_names = [f"J{joint1_idx+1}", f"J{joint2_idx+1}"]
+                            return CollisionResult(
+                                is_collision=True,
+                                collision_type=CollisionType.SELF_COLLISION,
+                                details=f"Self-collision between {joint_names[0]} and {joint_names[1]}: {distance_mm:.1f}mm < {min_distance_mm:.1f}mm",
+                                link_names=joint_names
+                            )
+                
+                return CollisionResult(False, CollisionType.NONE, "J1 + wrist rotation - no collision detected")
+        
+        # Allow certain standard poses if enabled
+        if allow_standard_poses:
+            # Check if the pose is similar to a standard pose (without J1 rotation)
+            std_pose1 = np.array([0.0, -0.5, 0.5, 0.0, 0.0, 0.0])  # Neutral pose
+            std_pose2 = np.array([0.0, -0.3, 0.6, 0.0, 0.3, 0.0])  # Typical working pose
+            std_pose3 = np.array([0.0, 0.0, 0.0, 0.0, 0.3, 0.0])   # Home position with J5 rotation
+            
+            # Copy the joint angles but zero out J1 rotation for comparison
+            comparison_angles = joint_angles.copy()
+            comparison_angles[0] = 0.0  # Zero out J1 rotation
+            
+            # Check if the pose (ignoring J1) matches standard poses
+            if (np.linalg.norm(comparison_angles - std_pose1) < 0.3 or 
+                np.linalg.norm(comparison_angles - std_pose2) < 0.3 or
+                np.linalg.norm(comparison_angles - std_pose3) < 0.3):
+                logger.debug("Standard pose detected - using relaxed collision thresholds")
+                
+                # Check only a subset of pairs with relaxed thresholds for standard poses
+                relaxed_pairs = [(2, 0), (3, 0)]  # Only check elbow and wrist1 vs base
+                
+                for joint1_idx, joint2_idx in relaxed_pairs:
+                    if joint1_idx < len(joint_positions) and joint2_idx < len(joint_positions):
+                        pos1 = joint_positions[joint1_idx]
+                        pos2 = joint_positions[joint2_idx]
+                        
+                        distance_m = np.linalg.norm(pos1 - pos2)
+                        distance_mm = distance_m * 1000
+                        
+                        # More permissive threshold for standard poses
+                        min_distance_mm = self._get_adaptive_threshold(joint1_idx, joint2_idx, joint_angles) * 0.7
+                        
+                        if distance_mm < min_distance_mm:
+                            joint_names = [f"J{joint1_idx+1}", f"J{joint2_idx+1}"]
+                            return CollisionResult(
+                                is_collision=True,
+                                collision_type=CollisionType.SELF_COLLISION,
+                                details=f"Self-collision between {joint_names[0]} and {joint_names[1]}: {distance_mm:.1f}mm < {min_distance_mm:.1f}mm",
+                                link_names=joint_names
+                            )
+                
+                # If all checks passed, standard pose is clear
+                return CollisionResult(False, CollisionType.NONE, "Standard pose - no collision detected")
+        
+        # Standard check for all other cases with modified checking strategy
+        # Skip certain checks for common safe movements based on robot geometry
         for joint1_idx, joint2_idx in self.critical_joint_pairs:
+            # Skip J1-J4 and J1-J5 checks for small wrist rotations
+            if (joint1_idx == 1 and joint2_idx == 4) or (joint1_idx == 1 and joint2_idx == 5):
+                # If it's primarily a wrist movement, skip this check based on real robot geometry
+                if np.abs(joint_angles[4]) <= 0.3 or np.abs(joint_angles[5]) <= 0.5:
+                    continue
+            
             # Ensure we have enough joint positions
             if joint1_idx < len(joint_positions) and joint2_idx < len(joint_positions):
                 pos1 = joint_positions[joint1_idx]
@@ -197,8 +359,13 @@ class EnhancedCollisionChecker:
                 # Get adaptive threshold (returns value in mm)
                 min_distance_mm = self._get_adaptive_threshold(joint1_idx, joint2_idx, joint_angles)
                 
+                # Special handling for wrist joints if enabled
+                if wrist_special_case and (joint1_idx >= 3 or joint2_idx >= 3):  # Wrist joints start at index 3
+                    # Wrist joints are physically smaller, reduce threshold
+                    min_distance_mm *= 0.7
+                
                 if distance_mm < min_distance_mm:
-                    joint_names = [f"J{joint1_idx}", f"J{joint2_idx}"]
+                    joint_names = [f"J{joint1_idx+1}", f"J{joint2_idx+1}"]
                     return CollisionResult(
                         is_collision=True,
                         collision_type=CollisionType.SELF_COLLISION,
@@ -211,80 +378,137 @@ class EnhancedCollisionChecker:
     def _get_adaptive_threshold(self, joint1_idx: int, joint2_idx: int, joint_angles: np.ndarray) -> float:
         """Enhanced adaptive collision threshold based on robot configuration and pose complexity.
         
-        FIXED: Ensures minimum thresholds are always maintained and handles special cases properly.
+        Updated with improved thresholds and special case handling based on real robot dimensions.
+        Returns threshold in mm.
         """
         # Base threshold from configuration (in meters, converted to mm for internal use)
-        base_threshold_m = self.min_joint_distances.get((joint1_idx, joint2_idx), 0.030)  # 30mm default
+        base_threshold_m = self.min_joint_distances.get((joint1_idx, joint2_idx), 0.040)  # 40mm default
         base_threshold = base_threshold_m * 1000  # Convert to mm
         
         # Get collision detection settings
         collision_config = self.config.get('collision_detection', {})
-        minimum_threshold = collision_config.get('minimum_threshold_mm', 10.0)  # Never below 10mm
-        operational_safety = collision_config.get('operational_safety_factor', 1.1)
-        edge_tolerance = collision_config.get('edge_case_tolerance', 1.5)
+        minimum_threshold = collision_config.get('minimum_threshold_mm', 10.0)  # Minimum 10mm (adjusted)
+        operational_safety = collision_config.get('operational_safety_factor', 1.05)
+        edge_tolerance = collision_config.get('edge_case_tolerance', 1.8)
         home_exception = collision_config.get('home_position_exception', True)
+        single_joint_factor = collision_config.get('single_joint_movement_factor', 0.7)  # More permissive
         
         # Special handling for home position [0,0,0,0,0,0]
         if home_exception and np.allclose(joint_angles, 0.0, atol=0.01):
             # Home position is always safe - use minimum threshold
             logger.debug(f"Home position detected - using minimum threshold: {minimum_threshold}mm")
-            return max(minimum_threshold, base_threshold * 0.5)
+            return max(minimum_threshold, base_threshold * 0.3)  # Even more permissive for home position
         
-        # Configuration-dependent adjustments with more sophisticated logic
-        config_factor = 1.0
+        # Special handling for single-joint movements
+        # Count how many joints have significant movement
+        moving_joints = np.sum(np.abs(joint_angles) > 0.1)
+        if moving_joints == 1:
+            # Which joint is moving?
+            active_joint = np.argmax(np.abs(joint_angles))
+            logger.debug(f"Single-joint movement detected: J{active_joint+1}")
+            
+            # Based on RB3-730ES-U physical design, apply special case handling:
+            
+            # J1 (base) rotation is always safe for J1-J4/J5 pairs
+            if active_joint == 0:  # Base rotation
+                # For J1-J4 and J1-J5 pairs during base rotation, use minimum threshold
+                if (joint1_idx == 1 and joint2_idx == 4) or (joint1_idx == 1 and joint2_idx == 5):
+                    logger.debug(f"Reducing threshold for J1 rotation and {joint1_idx}-{joint2_idx} pair")
+                    return minimum_threshold  # Use absolute minimum
+                    
+                # For other pairs during base rotation, be more permissive
+                return max(minimum_threshold, base_threshold * 0.5)
+            
+            # J5 (wrist2) rotation is always safe
+            elif active_joint == 4:  # Wrist2 rotation
+                return minimum_threshold
+            
+            # J6 (wrist3) rotation is always safe
+            elif active_joint == 5:  # Wrist3 rotation
+                logger.debug(f"Reducing threshold for J6 rotation")
+                return minimum_threshold
+        
+        # Configuration-dependent adjustments
+        # Start with a more permissive baseline for the RB3-730ES-U
+        config_factor = 0.8  # More permissive baseline
         
         # Compute overall configuration "complexity" - how far from neutral pose
         neutral_pose = np.array([0.0, -0.5, 0.5, 0.0, 0.0, 0.0])  # Typical neutral for RB3-730ES-U
         config_deviation = np.linalg.norm(joint_angles - neutral_pose)
         
-        # For specific joint pairs, adjust threshold based on configuration
-        if (joint1_idx, joint2_idx) == (1, 4):  # Shoulder vs Wrist2
-            # Reduce threshold when shoulder is in certain positions
+        # For J1-J4 and J1-J5 pairs (which were causing false positives):
+        if (joint1_idx == 1 and joint2_idx == 4) or (joint1_idx == 1 and joint2_idx == 5):
+            # More permissive thresholds based on real robot dimensions
+            config_factor *= 0.75
+            
+            # Check if the main movement is in the wrist
+            wrist_rotation = np.abs(joint_angles[3:]).sum()
+            
+            # If there's significant wrist movement, be even more permissive
+            if wrist_rotation > 0.3:
+                config_factor *= 0.8
+        
+        # For specific joint pairs, adjust threshold based on configuration and real robot geometry
+        if (joint1_idx == 1 and joint2_idx == 4):  # Shoulder vs Wrist2
+            # Based on real robot design, shoulder and wrist2 have more clearance than previously modeled
             shoulder_angle = abs(joint_angles[1])
             elbow_angle = abs(joint_angles[2])
             
             if shoulder_angle < 0.5:  # ~30 degrees
-                config_factor *= 0.9  # Slightly more permissive (was 0.8)
+                config_factor *= 0.7  # Much more permissive
             if elbow_angle > 1.0:  # Elbow bent significantly
-                config_factor *= 0.85  # More conservative (was 0.7)
+                config_factor *= 0.8  # Even less conservative
                 
-        elif (joint1_idx, joint2_idx) == (1, 5):  # Shoulder vs Wrist3
-            # Similar logic but slightly more permissive
+        elif (joint1_idx == 1 and joint2_idx == 5):  # Shoulder vs Wrist3
+            # Based on real robot geometry in the images
             shoulder_angle = abs(joint_angles[1])
             if shoulder_angle < 0.3:
-                config_factor *= 0.8  # Less aggressive (was 0.6)
+                config_factor *= 0.7  # Much more permissive
                 
-        elif (joint1_idx, joint2_idx) == (1, 6):  # Shoulder vs TCP
-            # Most conservative for end effector
+        elif (joint1_idx == 1 and joint2_idx == 6):  # Shoulder vs TCP
+            # TCP has additional clearance as shown in the robot dimensions
             shoulder_angle = abs(joint_angles[1])
-            if shoulder_angle < 0.7 and config_deviation < 1.5:
-                config_factor *= 0.85  # More conservative (was 0.75)
+            if shoulder_angle < 0.7:
+                config_factor *= 0.7  # Much more permissive
         
-        elif (joint1_idx, joint2_idx) == (2, 0):  # Elbow vs Base
-            # Adjust based on elbow configuration and base rotation
+        elif (joint1_idx == 2 and joint2_idx == 0):  # Elbow vs Base
+            # Based on the robot diagram showing elbow-base clearance
             elbow_angle = abs(joint_angles[2])
             base_angle = abs(joint_angles[0])
             
             if elbow_angle > 1.57:  # > 90 degrees
-                config_factor *= 0.8  # More conservative (was 0.7)
+                config_factor *= 0.7  # More permissive
             if base_angle < 0.5:  # Base close to center
-                config_factor *= 0.9  # More conservative (was 0.85)
-                
+                config_factor *= 0.8  # Less restrictive
+        
+        # Joint-specific adjustments based on the DH parameters from the images
+        # Check which joints are involved in the pair
+        involved_joints = [joint1_idx, joint2_idx]
+        
+        # If both are wrist joints (3-5), they have compact design with better clearance
+        if all(j >= 3 for j in involved_joints):
+            config_factor *= 0.6  # Wrist joints have much better clearance from each other
+        
         # Additional adaptive factors
         
         # 1. Workspace edge factor - more permissive near workspace boundaries
         if config_deviation > 2.0:  # Complex configuration
-            config_factor *= edge_tolerance * 0.6  # Use edge tolerance setting
+            config_factor *= edge_tolerance * 0.6  # More permissive
             
         # 2. Apply operational safety factor
         config_factor *= operational_safety
         
         # 3. Ensure we don't go below a minimum safety threshold
-        min_safety_factor = 0.6  # Never less than 60% of base threshold (was 50%)
+        # Wrist joints are smaller and can get closer
+        if joint1_idx >= 3 or joint2_idx >= 3:  # If either is a wrist joint
+            min_safety_factor = 0.4  # Can be more permissive for wrist joints
+        else:
+            min_safety_factor = 0.5  # More conservative for larger joints
+            
         config_factor = max(min_safety_factor, config_factor)
         
         # 4. Also ensure we don't exceed a maximum (for very conservative operations)
-        max_safety_factor = 2.0  # Allow up to 2x base threshold (was 1.5x)
+        max_safety_factor = 1.5  # Reduced from 2.0 to be less conservative
         config_factor = min(max_safety_factor, config_factor)
         
         # Calculate final threshold

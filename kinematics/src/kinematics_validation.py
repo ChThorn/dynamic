@@ -43,7 +43,7 @@ class KinematicsValidator:
         
         Args:
             forward_kinematics: ForwardKinematics instance
-            inverse_kinematics: InverseKinematics instance
+            inverse_kinematics: FastIK instance
         """
         self.fk = forward_kinematics
         self.ik = inverse_kinematics
@@ -990,11 +990,11 @@ def run_comprehensive_validation(robot_controller,
         real_data_path: Path to real robot data (optional)
     """
     from .forward_kinematic import ForwardKinematics
-    from .inverse_kinematic import InverseKinematics
+    from .inverse_kinematic import FastIK
     
     # Create kinematics modules
     fk = ForwardKinematics()
-    ik = InverseKinematics(fk)
+    ik = FastIK(fk)
     
     # Create validator
     validator = KinematicsValidator(fk, ik)

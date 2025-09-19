@@ -18,7 +18,7 @@ sys.path.insert(0, planning_src)
 sys.path.insert(0, kinematics_src)
 
 from forward_kinematic import ForwardKinematics
-from inverse_kinematic import InverseKinematics
+from inverse_kinematic import FastIK
 from motion_planner import MotionPlanner, PlanningStrategy, PlanningStatus
 from production_validator import ProductionValidator, ValidationLevel
 
@@ -30,7 +30,7 @@ def test_motion_planning_scenarios():
     
     # Initialize system
     fk = ForwardKinematics()
-    ik = InverseKinematics(fk)
+    ik = FastIK(fk)
     planner = MotionPlanner(fk, ik)
     
     # Enable production mode
@@ -148,7 +148,7 @@ def test_cartesian_planning():
     
     # Initialize system
     fk = ForwardKinematics()
-    ik = InverseKinematics(fk)
+    ik = FastIK(fk)
     planner = MotionPlanner(fk, ik)
     
     # Test poses

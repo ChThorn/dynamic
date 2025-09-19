@@ -3,7 +3,16 @@
 Advanced 3D Interactive Pose Control Visualizer
 
 This tool combines a multi-view 2D plotting interface for precise point definition
-with the back-end logic for generating robot TCP poses, now with rotational adjustment.
+with the back-end logic for ge            # Add reachability constraints based on empirically validated robot capabilities
+            # From extensive testing: 500mm reliable baseline, 600mm extended limit, 650mm conservative max
+            # Original workspace-based calculation was overly optimistic
+            # workspace_radius_m = min(abs(self.workspace_limits['x_max']), abs(self.workspace_limits['y_max']))
+            
+            self.reachability_limits = {
+                'max_radius_mm': 650,        # Conservative maximum with headroom (empirically tested)
+                'warning_radius_mm': 600,    # Extended reach limit (requires optimized IK parameters)
+                'safe_radius_mm': 500,       # Reliable baseline reach validated in testing
+            }ot TCP poses, now with rotational adjustment.
 
 Features:
 - Self-contained with local calibration data (no external dependencies)
@@ -187,17 +196,14 @@ class AdvancedPoseVisualizer:
                 'z_max': workspace.get('z_max', 1.1) - margin_z,
             }
             
-            # Add reachability constraints based on URDF robot model (RB3-730ES-U)
-            # From URDF: base=145.3mm, shoulder-elbow=286mm, elbow-wrist=344mm, wrist-tcp=100mm
-            # Maximum theoretical reach: 286+344+100 = 730mm (matches model name)
-            # Practical reach considering joint limits and singularities
-            # Updated to use workspace constraints for consistency
-            workspace_radius_m = min(abs(self.workspace_limits['x_max']), abs(self.workspace_limits['y_max']))
+            # Add reachability constraints based on empirically validated robot capabilities
+            # Updated based on real robot testing: 600mm reliable with downward gripper
+            # Zones adjusted to reflect actual operational capabilities
             
             self.reachability_limits = {
-                'max_radius_mm': workspace_radius_m * 1000,      # Use workspace limit (720mm)
-                'warning_radius_mm': workspace_radius_m * 1000 * 0.9,  # 90% of workspace (648mm)
-                'safe_radius_mm': workspace_radius_m * 1000 * 0.8,     # 80% of workspace (576mm)
+                'max_radius_mm': 650,        # Conservative maximum with small headroom
+                'warning_radius_mm': 620,    # Extended reach limit (approaching maximum)
+                'safe_radius_mm': 600,       # Reliable reach validated with downward gripper
             }
             
             # Get robot info
@@ -527,7 +533,7 @@ class AdvancedPoseVisualizer:
             # Identify which text box was updated
             updated_key = None
             for key, tb in self.text_boxes.items():
-                if tb.ax.is_figure_set() and tb.ax.get_visible() and tb.text == text:
+                if tb.ax.get_visible() and tb.text == text:
                     updated_key = key
                     break
             

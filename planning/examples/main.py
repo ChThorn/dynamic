@@ -49,7 +49,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'kinemati
 
 # Import kinematics modules
 from forward_kinematic import ForwardKinematics
-from inverse_kinematic import InverseKinematics
+from inverse_kinematic import FastIK
 
 # Import planning modules
 from path_planner import PathPlanner, ConstraintsChecker
@@ -188,7 +188,10 @@ def test_trajectory_planning(path_planner, sample_path):
             
             if result.optimization_info:
                 opt_info = result.optimization_info
-                print(f"  Optimization: Time scaled by {opt_info['time_scale']:.2f}")
+                if 'time_scale' in opt_info:
+                    print(f"  Optimization: Time scaled by {opt_info['time_scale']:.2f}")
+                else:
+                    print(f"  Optimization: Info available but no time scaling reported")
         else:
             print(f"  Error: {result.error_message}")
         
@@ -293,7 +296,7 @@ def test_integrated_planning_pipeline():
         # Initialize all components
         print("Initializing planning system components...")
         fk = ForwardKinematics()
-        ik = InverseKinematics(fk)
+        ik = FastIK(fk)
         
         # Create integrated motion planner
         motion_planner = MotionPlanner(fk, ik)
@@ -442,7 +445,7 @@ def main():
     try:
         # Initialize kinematics
         fk = ForwardKinematics()
-        ik = InverseKinematics(fk)
+        ik = FastIK(fk)
         logger.info("✅ Kinematics modules initialized")
         
         # Test individual components

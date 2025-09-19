@@ -89,7 +89,7 @@ class MotionPlanner:
         
         Args:
             kinematics_fk: ForwardKinematics instance
-            kinematics_ik: InverseKinematics instance  
+            kinematics_ik: FastIK instance  
             path_planner: PathPlanner instance (created if None)
             trajectory_planner: TrajectoryPlanner instance (created if None)
         """

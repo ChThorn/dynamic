@@ -25,11 +25,11 @@ def test_fk_ik_consistency():
         # Import kinematics modules
         sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'kinematics', 'src'))
         from forward_kinematic import ForwardKinematics
-        from inverse_kinematic import InverseKinematics
+        from inverse_kinematic import FastIK
         
         # Initialize FK and IK
         fk = ForwardKinematics()
-        ik = InverseKinematics(fk)
+        ik = FastIK(fk)
         
         def rotation_matrix_to_euler(R):
             """Convert rotation matrix to Euler angles (ZYX convention)"""
@@ -142,10 +142,10 @@ def test_waypoint_path_consistency(waypoints):
         # Import kinematics modules
         sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'kinematics', 'src'))
         from forward_kinematic import ForwardKinematics
-        from inverse_kinematic import InverseKinematics
+        from inverse_kinematic import FastIK
         
         fk = ForwardKinematics()
-        ik = InverseKinematics(fk)
+        ik = FastIK(fk)
         
         print(f"Testing path with {len(waypoints)} waypoints:")
         print("-" * 60)
@@ -313,11 +313,13 @@ def test_reachability_analysis():
         home_joints = [0.0, -60.0, 90.0, 0.0, 30.0, 0.0]
         
         # Test positions at different distances to find limits
+        # Added a specific 650mm test target with optimized Z-height (250mm)
         test_distances = [
             (300, [300.0, 0.0, 400.0], "Safe zone (300mm)"),
             (400, [400.0, 0.0, 350.0], "Comfortable zone (400mm)"),
             (500, [500.0, 0.0, 300.0], "Warning zone (500mm)"),
             (600, [424.3, 424.3, 250.0], "Extended zone (600mm)"),
+            (650, [460.0, 460.0, 250.0], "Target zone (650mm)"),
             (700, [495.0, 495.0, 200.0], "Maximum zone (700mm)"),
         ]
         

@@ -41,7 +41,7 @@ sys.path.append('../planning/src')
 sys.path.append('.')
 
 from forward_kinematic import ForwardKinematics
-from inverse_kinematic import InverseKinematics
+from inverse_kinematic import FastIK
 from visualizer_considered_gripper import AdvancedPoseVisualizer
 
 # Import motion planning components

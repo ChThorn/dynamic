@@ -344,7 +344,7 @@ class AOTRRCPathPlanner:
         
         Args:
             kinematics_fk: ForwardKinematics instance
-            kinematics_ik: InverseKinematics instance
+            kinematics_ik: FastIK instance
             config_path: Path to constraints configuration
         """
         self.fk = kinematics_fk
@@ -773,7 +773,7 @@ class PathPlanner:
         
         Args:
             kinematics_fk: ForwardKinematics instance
-            kinematics_ik: InverseKinematics instance  
+            kinematics_ik: FastIK instance  
             config_path: Path to constraints configuration
         """
         self.fk = kinematics_fk
