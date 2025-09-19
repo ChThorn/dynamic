@@ -1,7 +1,7 @@
 ================================================================================
 COMPREHENSIVE ROBOT KINEMATICS VALIDATION REPORT
 ================================================================================
-Generated: 2025-09-17 10:46:38
+Generated: 2025-09-19 13:31:01
 Robot: RB3-730ES-U (6-DOF)
 Joints: 6
 
@@ -18,18 +18,18 @@ FK-IK CONSISTENCY TEST:
   Success rate: 100.0% (150/150)
   Mean position error: 0.000 mm
   Mean rotation error: 0.000°
-  Mean computation time: 1.4 ms
+  Mean computation time: 0.3 ms
 
 WORKSPACE COVERAGE ANALYSIS:
-  Coverage: 55.4%
-  Reachable points: 443/800
-  Volume estimate: 0.664 m³
+  Coverage: 56.6%
+  Reachable points: 453/800
+  Volume estimate: 0.679 m³
 
 
 REAL ROBOT DATA VALIDATION:
   Waypoints tested: 15
   Mean position error: 1.747 mm
   Mean rotation error: 0.081°
-  IK success rate: 66.7%
+  IK success rate: 100.0%
 
 ================================================================================
