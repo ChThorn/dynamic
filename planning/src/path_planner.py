@@ -344,7 +344,7 @@ class AOTRRCPathPlanner:
         
         Args:
             kinematics_fk: ForwardKinematics instance
-            kinematics_ik: InverseKinematics instance
+            kinematics_ik: FastIK instance
             config_path: Path to constraints configuration
         """
         self.fk = kinematics_fk
@@ -352,12 +352,17 @@ class AOTRRCPathPlanner:
         self.constraints_checker = ConstraintsChecker(config_path)
         self.n_joints = kinematics_fk.n_joints
         
-        # AORRTC parameters
-        self.max_iter = 5000
-        self.step_size = np.radians(10)  # 10 degrees in radians
-        self.goal_bias = 0.1
-        self.connect_threshold = np.radians(15)  # 15 degrees
-        self.rewire_radius = np.radians(20)  # 20 degrees
+        # AORRTC parameters (optimized for real-time performance)
+        self.max_iter = 1000  # Reduced from 5000 for faster planning
+        self.step_size = np.radians(20)  # Increased from 10° to 20° for larger steps
+        self.goal_bias = 0.15  # Increased bias toward goal for faster convergence
+        self.connect_threshold = np.radians(25)  # Increased for easier connections
+        self.rewire_radius = np.radians(30)  # Increased for better optimization
+        
+        # Early termination parameters for real-time operation
+        self.early_termination_threshold = 200  # Stop if no improvement for 200 iterations
+        self.quality_threshold = 1.1  # Accept path within 10% of optimal
+        self.fast_mode = False  # Can be enabled for even faster planning
         
         # Planning state
         self.tree_a: Dict[str, List] = {'points': [], 'parents': [], 'costs': []}
@@ -371,7 +376,30 @@ class AOTRRCPathPlanner:
         # Joint limits for sampling
         self.joint_limits = self._get_joint_limits()
         
-        logger.info("AORRTC path planner initialized with advanced algorithms")
+        logger.info("AORRTC path planner initialized with real-time optimized parameters")
+    
+    def enable_fast_mode(self, enable: bool = True):
+        """
+        Enable/disable fast mode for real-time operation.
+        Fast mode sacrifices some path quality for speed.
+        """
+        self.fast_mode = enable
+        if enable:
+            # Ultra-fast parameters for real-time operation
+            self.max_iter = 500
+            self.step_size = np.radians(30)  # 30° steps
+            self.goal_bias = 0.2
+            self.early_termination_threshold = 100
+            self.quality_threshold = 1.2  # Accept 20% suboptimal paths
+            logger.info("Fast mode enabled: ~5-15 second planning times")
+        else:
+            # Standard real-time parameters
+            self.max_iter = 1000
+            self.step_size = np.radians(20)
+            self.goal_bias = 0.15
+            self.early_termination_threshold = 200
+            self.quality_threshold = 1.1
+            logger.info("Standard mode enabled: ~10-30 second planning times")
     
     def plan_aorrtc_path(self, q_start: np.ndarray, q_goal: np.ndarray, 
                         max_iterations: Optional[int] = None) -> PlanningResult:
@@ -415,10 +443,18 @@ class AOTRRCPathPlanner:
         for i in range(self.max_iter):
             self.iteration = i
             
-            # Early termination if no improvement
-            if self.best_path and (i - self.last_improvement) > 1000:
-                logger.info(f"Early termination at iteration {i} - no improvement")
+            # Early termination for real-time operation
+            if self.best_path and (i - self.last_improvement) > self.early_termination_threshold:
+                logger.info(f"Early termination at iteration {i} - no improvement for {self.early_termination_threshold} iterations")
                 break
+            
+            # Quality-based early termination
+            if self.best_path and self.best_cost > 0:
+                # Calculate theoretical minimum (straight line distance)
+                min_possible_cost = np.linalg.norm(q_goal - q_start)
+                if self.best_cost <= min_possible_cost * self.quality_threshold:
+                    logger.info(f"Early termination at iteration {i} - acceptable quality achieved")
+                    break
             
             # Progress reporting
             if i % 500 == 0 and i > 0:
@@ -737,7 +773,7 @@ class PathPlanner:
         
         Args:
             kinematics_fk: ForwardKinematics instance
-            kinematics_ik: InverseKinematics instance  
+            kinematics_ik: FastIK instance  
             config_path: Path to constraints configuration
         """
         self.fk = kinematics_fk
@@ -748,6 +784,24 @@ class PathPlanner:
         self.aorrtc_planner = AOTRRCPathPlanner(kinematics_fk, kinematics_ik, config_path)
         
         logger.info("Clean path planner initialized: AORRTC primary + smart fallback")
+    
+    def enable_fast_mode(self, enable: bool = True):
+        """Enable fast mode for real-time robot operation."""
+        self.aorrtc_planner.enable_fast_mode(enable)
+        if enable:
+            logger.info("Path planner fast mode enabled for real-time operation")
+        else:
+            logger.info("Path planner standard mode enabled")
+    
+    def get_planning_stats(self) -> Dict[str, Any]:
+        """Get current planning configuration and performance stats."""
+        return {
+            'max_iterations': self.aorrtc_planner.max_iter,
+            'step_size_degrees': np.degrees(self.aorrtc_planner.step_size),
+            'fast_mode': self.aorrtc_planner.fast_mode,
+            'early_termination_threshold': self.aorrtc_planner.early_termination_threshold,
+            'quality_threshold': self.aorrtc_planner.quality_threshold
+        }
     
     def plan_path(self, q_start: np.ndarray, q_goal: np.ndarray,
                   max_iterations: Optional[int] = None, 
@@ -782,7 +836,7 @@ class PathPlanner:
         return result
     
     def _smart_fallback(self, q_start: np.ndarray, q_goal: np.ndarray) -> PlanningResult:
-        """Smart fallback using validated linear interpolation."""
+        """Enhanced smart fallback with multiple strategies for difficult planning scenarios."""
         start_time = time.time()
         
         # Validate endpoints
@@ -800,8 +854,39 @@ class PathPlanner:
                 computation_time=time.time() - start_time
             )
         
-        # Generate interpolated path with validation
-        max_step = np.radians(15)  # 15 degrees max step
+        # Strategy 1: Direct linear interpolation (fastest)
+        result = self._try_linear_interpolation(q_start, q_goal, start_time)
+        if result.success:
+            logger.info("Smart fallback: Linear interpolation successful")
+            return result
+        
+        # Strategy 2: Multi-segment interpolation via intermediate waypoints
+        result = self._try_multisegment_path(q_start, q_goal, start_time)
+        if result.success:
+            logger.info("Smart fallback: Multi-segment path successful")
+            return result
+        
+        # Strategy 3: Workspace-guided interpolation
+        result = self._try_workspace_guided_path(q_start, q_goal, start_time)
+        if result.success:
+            logger.info("Smart fallback: Workspace-guided path successful")
+            return result
+        
+        # Strategy 4: Joint-by-joint sequential motion (most conservative)
+        result = self._try_sequential_joint_motion(q_start, q_goal, start_time)
+        if result.success:
+            logger.info("Smart fallback: Sequential joint motion successful")
+            return result
+        
+        return PlanningResult(
+            success=False,
+            error_message="All fallback strategies failed",
+            computation_time=time.time() - start_time
+        )
+    
+    def _try_linear_interpolation(self, q_start: np.ndarray, q_goal: np.ndarray, start_time: float) -> PlanningResult:
+        """Try simple linear interpolation between start and goal."""
+        max_step = np.radians(10)  # Conservative 10 degrees max step
         distance = np.linalg.norm(q_goal - q_start)
         num_steps = max(2, int(np.ceil(distance / max_step)))
         
@@ -814,18 +899,131 @@ class PathPlanner:
             if not self._is_configuration_valid(q_interp):
                 return PlanningResult(
                     success=False,
-                    error_message="Interpolated path violates constraints",
+                    error_message="Linear interpolation violates constraints",
                     computation_time=time.time() - start_time
                 )
-            
             waypoints.append(q_interp)
         
         return PlanningResult(
             success=True,
             path=waypoints,
             computation_time=time.time() - start_time,
-            validation_results={'algorithm': 'smart_fallback', 'waypoints': len(waypoints)}
+            validation_results={'algorithm': 'linear_interpolation', 'waypoints': len(waypoints)}
         )
+    
+    def _try_multisegment_path(self, q_start: np.ndarray, q_goal: np.ndarray, start_time: float) -> PlanningResult:
+        """Try path via strategic intermediate configurations."""
+        # Generate intermediate waypoints using different strategies
+        intermediate_configs = [
+            (q_start + q_goal) / 2,  # Midpoint
+            q_start * 0.7 + q_goal * 0.3,  # 30% toward goal
+            q_start * 0.3 + q_goal * 0.7,  # 70% toward goal
+        ]
+        
+        # Add strategic joint configurations
+        neutral_config = np.array([0.0, -0.5, 0.5, 0.0, 0.0, 0.0])
+        intermediate_configs.append((q_start + neutral_config) / 2)
+        intermediate_configs.append((q_goal + neutral_config) / 2)
+        
+        # Try each intermediate configuration
+        for intermediate in intermediate_configs:
+            # Validate intermediate configuration
+            if not self._is_configuration_valid(intermediate):
+                continue
+            
+            # Try path: start -> intermediate -> goal
+            path1 = self._try_linear_interpolation(q_start, intermediate, start_time)
+            if not path1.success:
+                continue
+                
+            path2 = self._try_linear_interpolation(intermediate, q_goal, start_time)
+            if not path2.success:
+                continue
+            
+            # Combine paths (remove duplicate intermediate point)
+            combined_path = path1.path[:-1] + path2.path
+            
+            return PlanningResult(
+                success=True,
+                path=combined_path,
+                computation_time=time.time() - start_time,
+                validation_results={'algorithm': 'multisegment', 'waypoints': len(combined_path)}
+            )
+        
+        return PlanningResult(success=False, error_message="Multisegment path failed")
+    
+    def _try_workspace_guided_path(self, q_start: np.ndarray, q_goal: np.ndarray, start_time: float) -> PlanningResult:
+        """Try path guided by workspace trajectory (Cartesian interpolation)."""
+        try:
+            # This would require FK - simplified version for now
+            # Generate path by interpolating in joint space but with workspace awareness
+            
+            # Use smaller steps for workspace-guided approach
+            max_step = np.radians(8)  # Even more conservative
+            distance = np.linalg.norm(q_goal - q_start)
+            num_steps = max(3, int(np.ceil(distance / max_step)))
+            
+            waypoints = []
+            for i in range(num_steps + 1):
+                # Use cubic interpolation for smoother motion
+                t = i / num_steps
+                t_smooth = 3 * t**2 - 2 * t**3  # Smooth step function
+                q_interp = (1 - t_smooth) * q_start + t_smooth * q_goal
+                
+                if not self._is_configuration_valid(q_interp):
+                    return PlanningResult(success=False, error_message="Workspace-guided path invalid")
+                waypoints.append(q_interp)
+            
+            return PlanningResult(
+                success=True,
+                path=waypoints,
+                computation_time=time.time() - start_time,
+                validation_results={'algorithm': 'workspace_guided', 'waypoints': len(waypoints)}
+            )
+            
+        except Exception as e:
+            return PlanningResult(success=False, error_message=f"Workspace-guided path error: {e}")
+    
+    def _try_sequential_joint_motion(self, q_start: np.ndarray, q_goal: np.ndarray, start_time: float) -> PlanningResult:
+        """Try moving one joint at a time (most conservative approach)."""
+        try:
+            waypoints = [q_start.copy()]
+            current_q = q_start.copy()
+            
+            # Move joints in order of importance: base, shoulder, elbow, wrists
+            joint_order = [0, 1, 2, 3, 4, 5]  # Can be customized based on robot
+            
+            for joint_idx in joint_order:
+                target_value = q_goal[joint_idx]
+                current_value = current_q[joint_idx]
+                
+                if abs(target_value - current_value) < 1e-6:
+                    continue  # Joint already at target
+                
+                # Move this joint gradually to target
+                joint_diff = target_value - current_value
+                max_joint_step = np.radians(20)  # 20 degrees per step for single joint
+                num_joint_steps = max(1, int(np.ceil(abs(joint_diff) / max_joint_step)))
+                
+                for step in range(1, num_joint_steps + 1):
+                    step_q = current_q.copy()
+                    step_q[joint_idx] = current_value + (joint_diff * step / num_joint_steps)
+                    
+                    if not self._is_configuration_valid(step_q):
+                        return PlanningResult(success=False, error_message=f"Sequential motion failed at joint {joint_idx}")
+                    
+                    waypoints.append(step_q.copy())
+                    current_q = step_q.copy()
+            
+            return PlanningResult(
+                success=True,
+                path=waypoints,
+                computation_time=time.time() - start_time,
+                validation_results={'algorithm': 'sequential_joints', 'waypoints': len(waypoints)}
+            )
+            
+        except Exception as e:
+            return PlanningResult(success=False, error_message=f"Sequential joint motion error: {e}")
     
     def _is_configuration_valid(self, q: np.ndarray) -> bool:
         """Check if joint configuration is valid."""

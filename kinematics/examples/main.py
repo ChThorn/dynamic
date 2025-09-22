@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Production-ready main application for robot kinematics with modular architecture.
+Production-ready main application for industrial robot kinematics.
 
-This example demonstrates the new modular kinematics system:
+This example demonstrates the high-performance kinematics system:
 1. Forward kinematics using ForwardKinematics class
-2. Inverse kinematics using InverseKinematics class  
+2. Real-time inverse kinematics using FastIK class
 3. Comprehensive validation using KinematicsValidator
 4. Real robot data validation
-5. Performance analysis and reporting
+5. Performance analysis for production applications
 
 Author: Robot Control Team
 """
@@ -18,13 +18,14 @@ import sys
 import os
 import time
 import json
+import matplotlib.pyplot as plt
 
 # Add the parent directory to the path to import from src
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-# Import only the new modular components
+# Import production-ready components
 from forward_kinematic import ForwardKinematics
-from inverse_kinematic import InverseKinematics
+from inverse_kinematic import FastIK
 from kinematics_validation import KinematicsValidator
 
 # Setup logging
@@ -72,12 +73,12 @@ def test_basic_forward_kinematics():
 
 def test_basic_inverse_kinematics(fk):
     """Test basic inverse kinematics functionality."""
-    logger.info("\n=== Testing Inverse Kinematics ===")
+    logger.info("\n=== Testing Real-Time Inverse Kinematics ===")
     
     try:
-        # Initialize inverse kinematics
-        ik = InverseKinematics(fk)
-        logger.info("Inverse kinematics initialized successfully")
+        # Initialize fast inverse kinematics
+        ik = FastIK(fk)
+        logger.info("Fast inverse kinematics initialized successfully")
         
         # Test with forward kinematics results
         test_configs = [
@@ -458,6 +459,307 @@ def validate_real_robot_data_direct(fk, ik):
         logger.error(f"Real robot data validation failed: {e}")
         return None
 
+def test_fast_ik_performance(fk, ik):
+    """Test FastIK solver performance for real-time pick-and-place operations."""
+    logger.info("\n=== Testing FastIK for Real-time Pick-and-Place ===")
+    
+    try:
+        # Initialize FastIK
+        fast_ik = FastIK(fk)
+        logger.info("Fast IK solver initialized successfully")
+        
+        # Configure standard and fast IK solvers for comparison
+        standard_params = {
+            'num_attempts': 10,
+            'max_iters': 150,
+            'pos_tol': 1e-3,  # 1mm
+            'rot_tol': 5e-3   # ~0.3°
+        }
+        
+        fast_params = {
+            'time_budget': 0.020,  # 20ms time budget
+            'acceptable_error': 0.004,  # 4mm
+            'max_attempts': 5
+        }
+        
+        # Generate pick and place target poses
+        print("\nGenerating pick-and-place target poses...")
+        targets = generate_pick_and_place_targets(50)  # Generate 50 targets
+        print(f"Generated {len(targets)} target poses")
+        
+        # Test standard IK
+        standard_results = {
+            'times': [],
+            'success_count': 0,
+            'pos_errors': [],
+            'rot_errors': []
+        }
+        
+        print("\nTesting standard IK...")
+        q_current = np.zeros(fk.n_joints)
+        
+        start_time = time.time()
+        for i, target in enumerate(targets):
+            solve_start = time.time()
+            q_sol, success = ik.solve(target, q_init=q_current, **standard_params)
+            solve_time = time.time() - solve_start
+            standard_results['times'].append(solve_time)
+            
+            if success:
+                standard_results['success_count'] += 1
+                
+                # Calculate errors
+                T_achieved = fk.compute_forward_kinematics(q_sol)
+                pos_err = np.linalg.norm(T_achieved[:3, 3] - target[:3, 3])
+                standard_results['pos_errors'].append(pos_err)
+                
+                # Rotation error
+                R_err = T_achieved[:3, :3].T @ target[:3, :3]
+                cos_angle = np.clip((np.trace(R_err) - 1) / 2.0, -1.0, 1.0)
+                rot_err = np.arccos(cos_angle)
+                standard_results['rot_errors'].append(rot_err)
+                
+                # Update current position for next target
+                q_current = q_sol
+            
+            if i % 10 == 0:
+                print(f"  Processing target {i+1}/{len(targets)}...")
+        
+        standard_total_time = time.time() - start_time
+        
+        # Test FastIK
+        fast_results = {
+            'times': [],
+            'success_count': 0,
+            'pos_errors': [],
+            'rot_errors': [],
+            'cache_hits': 0
+        }
+        
+        print("\nTesting FastIK...")
+        q_current = np.zeros(fk.n_joints)
+        fast_ik.clear_cache()
+        
+        start_time = time.time()
+        for i, target in enumerate(targets):
+            solve_start = time.time()
+            q_sol, success = fast_ik.solve(target, q_init=q_current, **fast_params)
+            solve_time = time.time() - solve_start
+            fast_results['times'].append(solve_time)
+            
+            if success:
+                fast_results['success_count'] += 1
+                
+                # Calculate errors
+                T_achieved = fk.compute_forward_kinematics(q_sol)
+                pos_err = np.linalg.norm(T_achieved[:3, 3] - target[:3, 3])
+                fast_results['pos_errors'].append(pos_err)
+                
+                # Rotation error
+                R_err = T_achieved[:3, :3].T @ target[:3, :3]
+                cos_angle = np.clip((np.trace(R_err) - 1) / 2.0, -1.0, 1.0)
+                rot_err = np.arccos(cos_angle)
+                fast_results['rot_errors'].append(rot_err)
+                
+                # Update current position for next target
+                q_current = q_sol
+                
+            if i % 10 == 0:
+                print(f"  Processing target {i+1}/{len(targets)}...")
+        
+        fast_total_time = time.time() - start_time
+        fast_stats = fast_ik.get_statistics()
+        fast_results['cache_hits'] = fast_stats['cache_hits']
+        
+        # Calculate real-time performance metrics
+        real_time_threshold = 0.020  # 20ms is typically real-time for robot control
+        standard_realtime_count = sum(1 for t in standard_results['times'] if t <= real_time_threshold)
+        fast_realtime_count = sum(1 for t in fast_results['times'] if t <= real_time_threshold)
+        
+        # Display results
+        print("\n=== FastIK Performance Results ===")
+        print("\nStandard IK:")
+        print(f"  Success rate: {standard_results['success_count']}/{len(targets)} "
+              f"({standard_results['success_count']/len(targets)*100:.1f}%)")
+        print(f"  Real-time success rate: {standard_realtime_count}/{len(targets)} "
+              f"({standard_realtime_count/len(targets)*100:.1f}%)")
+        print(f"  Average solve time: {np.mean(standard_results['times'])*1000:.2f}ms")
+        print(f"  Max solve time: {np.max(standard_results['times'])*1000:.2f}ms")
+        if standard_results['pos_errors']:
+            print(f"  Average position error: {np.mean(standard_results['pos_errors'])*1000:.2f}mm")
+            print(f"  Average rotation error: {np.mean(standard_results['rot_errors']):.4f}rad "
+                 f"({np.mean(standard_results['rot_errors'])*180/np.pi:.2f}°)")
+        print(f"  Total processing time: {standard_total_time:.2f}s")
+        
+        print("\nFast IK:")
+        print(f"  Success rate: {fast_results['success_count']}/{len(targets)} "
+              f"({fast_results['success_count']/len(targets)*100:.1f}%)")
+        print(f"  Real-time success rate: {fast_realtime_count}/{len(targets)} "
+              f"({fast_realtime_count/len(targets)*100:.1f}%)")
+        print(f"  Average solve time: {np.mean(fast_results['times'])*1000:.2f}ms")
+        print(f"  Max solve time: {np.max(fast_results['times'])*1000:.2f}ms")
+        print(f"  Cache hit rate: {fast_results['cache_hits']}/{len(targets)} "
+              f"({fast_results['cache_hits']/len(targets)*100:.1f}%)")
+        if fast_results['pos_errors']:
+            print(f"  Average position error: {np.mean(fast_results['pos_errors'])*1000:.2f}mm")
+            print(f"  Average rotation error: {np.mean(fast_results['rot_errors']):.4f}rad "
+                 f"({np.mean(fast_results['rot_errors'])*180/np.pi:.2f}°)")
+        print(f"  Total processing time: {fast_total_time:.2f}s")
+        
+        # Compute speedup
+        if standard_total_time > 0:
+            speedup = standard_total_time / fast_total_time
+            print(f"\nOverall speedup: {speedup:.2f}x")
+        
+        avg_standard = np.mean(standard_results['times']) if standard_results['times'] else 0
+        avg_fast = np.mean(fast_results['times']) if fast_results['times'] else 0
+        if avg_standard > 0:
+            solve_speedup = avg_standard / avg_fast
+            print(f"Per-solve speedup: {solve_speedup:.2f}x")
+        
+        # Plot results if matplotlib available
+        try:
+            plt.figure(figsize=(12, 10))
+            
+            # Solve times
+            plt.subplot(2, 2, 1)
+            plt.plot(standard_results['times'], 'b-', label='Standard IK')
+            plt.plot(fast_results['times'], 'r-', label='Fast IK')
+            plt.axhline(y=real_time_threshold, color='g', linestyle='--', 
+                       label=f'Real-time ({real_time_threshold*1000}ms)')
+            plt.xlabel('Target #')
+            plt.ylabel('Solve Time (s)')
+            plt.title('IK Solve Times')
+            plt.legend()
+            plt.grid(True)
+            
+            # Success rates
+            plt.subplot(2, 2, 2)
+            labels = ['Overall Success', 'Real-time Success']
+            standard_success = [standard_results['success_count']/len(targets), 
+                               standard_realtime_count/len(targets)]
+            fast_success = [fast_results['success_count']/len(targets), 
+                           fast_realtime_count/len(targets)]
+            
+            x = np.arange(len(labels))
+            width = 0.35
+            plt.bar(x - width/2, standard_success, width, label='Standard IK')
+            plt.bar(x + width/2, fast_success, width, label='Fast IK')
+            plt.xlabel('Metric')
+            plt.ylabel('Success Rate')
+            plt.title('IK Success Rates')
+            plt.xticks(x, labels)
+            plt.ylim(0, 1.0)
+            plt.legend()
+            plt.grid(True)
+            
+            # Position errors
+            plt.subplot(2, 2, 3)
+            if standard_results['pos_errors'] and fast_results['pos_errors']:
+                plt.hist(np.array(standard_results['pos_errors'])*1000, bins=15, alpha=0.5, label='Standard IK')
+                plt.hist(np.array(fast_results['pos_errors'])*1000, bins=15, alpha=0.5, label='Fast IK')
+                plt.xlabel('Position Error (mm)')
+                plt.ylabel('Count')
+                plt.title('Position Error Distribution')
+                plt.legend()
+                plt.grid(True)
+            
+            # Rotation errors
+            plt.subplot(2, 2, 4)
+            if standard_results['rot_errors'] and fast_results['rot_errors']:
+                plt.hist(np.array(standard_results['rot_errors'])*180/np.pi, bins=15, alpha=0.5, label='Standard IK')
+                plt.hist(np.array(fast_results['rot_errors'])*180/np.pi, bins=15, alpha=0.5, label='Fast IK')
+                plt.xlabel('Rotation Error (degrees)')
+                plt.ylabel('Count')
+                plt.title('Rotation Error Distribution')
+                plt.legend()
+                plt.grid(True)
+            
+            plt.tight_layout()
+            plt.savefig('fast_ik_performance.png')
+            print("Performance plot saved as 'fast_ik_performance.png'")
+            plt.close()
+            
+        except Exception as e:
+            logger.warning(f"Could not generate performance plot: {e}")
+        
+        return {
+            'standard': standard_results,
+            'fast': fast_results,
+            'speedup': solve_speedup if avg_standard > 0 else 0
+        }
+        
+    except Exception as e:
+        logger.error(f"FastIK test failed: {e}")
+        raise
+
+def generate_pick_and_place_targets(num_targets: int = 50):
+    """
+    Generate a sequence of realistic pick-and-place target poses.
+    
+    Creates targets that simulate picking objects from a bin and
+    placing them in another location - common in industrial automation.
+    
+    Args:
+        num_targets: Number of targets to generate
+        
+    Returns:
+        List of 4x4 homogeneous transformation matrices
+    """
+    targets = []
+    
+    # Define pick and place regions
+    pick_region = {
+        'center': np.array([0.4, 0.3, 0.1]),  # x, y, z in meters
+        'size': np.array([0.2, 0.2, 0.05])    # width, depth, height
+    }
+    
+    place_region = {
+        'center': np.array([0.4, -0.3, 0.1]),
+        'size': np.array([0.2, 0.2, 0.05])
+    }
+    
+    # Generate alternating pick and place poses
+    for i in range(num_targets):
+        is_pick = (i % 2 == 0)
+        region = pick_region if is_pick else place_region
+        
+        # Random position within region
+        position = region['center'] + np.random.uniform(-0.5, 0.5, 3) * region['size']
+        
+        # For picking: mostly top-down orientation with small variations
+        # For placing: similar but with more variation
+        roll = np.random.normal(0, 0.1) if is_pick else np.random.normal(0, 0.2)
+        pitch = np.random.normal(0, 0.1) if is_pick else np.random.normal(0, 0.2)
+        yaw = np.random.uniform(-np.pi, np.pi)  # Allow any yaw rotation
+        
+        # Create rotation matrix (ZYX convention)
+        Rz = np.array([
+            [np.cos(yaw), -np.sin(yaw), 0],
+            [np.sin(yaw), np.cos(yaw), 0],
+            [0, 0, 1]
+        ])
+        Ry = np.array([
+            [np.cos(pitch), 0, np.sin(pitch)],
+            [0, 1, 0],
+            [-np.sin(pitch), 0, np.cos(pitch)]
+        ])
+        Rx = np.array([
+            [1, 0, 0],
+            [0, np.cos(roll), -np.sin(roll)],
+            [0, np.sin(roll), np.cos(roll)]
+        ])
+        R = Rz @ Ry @ Rx
+        
+        # Create transformation matrix
+        T = np.eye(4)
+        T[:3, :3] = R
+        T[:3, 3] = position
+        
+        targets.append(T)
+    
+    return targets
+
 def display_performance_summary(fk, ik):
     """Display performance summary from modular components."""
     logger.info("\n=== Performance Summary ===")
@@ -501,6 +803,31 @@ def main():
         # Test 5: Direct real data validation
         real_data_results = validate_real_robot_data_direct(fk, ik)
         
+        # Test 6: FastIK performance for real-time pick-and-place
+        print("\nDo you want to test FastIK for real-time pick-and-place? (y/n)")
+        response = input().lower()
+        fastik_results = None
+        
+        if response == 'y' or response == 'yes':
+            fastik_results = test_fast_ik_performance(fk, ik)
+            
+            # Display FastIK usage recommendations
+            print("\n=== FastIK Usage Recommendations ===")
+            print("\nFor Real-time Pick-and-Place Operations:")
+            print("1. Basic Usage:")
+            print("   fast_ik = FastIK(fk)")
+            print("   q_sol, success = fast_ik.solve(target_pose)")
+            print("\n2. Time Budgeting:")
+            print("   fast_ik.set_time_budget(0.020)  # 20ms time budget")
+            print("   # or when solving:")
+            print("   q_sol, success = fast_ik.solve(target_pose, time_budget=0.020)")
+            print("\n3. Warm Starting (caching):")
+            print("   # Enable warm starting (on by default)")
+            print("   fast_ik.update_parameters(use_warm_start=True)")
+            print("\n4. Error Tolerance:")
+            print("   # Allow larger errors for faster solving")
+            print("   fast_ik.update_parameters(acceptable_error=0.004)  # 4mm")
+            
         # Display performance summary
         display_performance_summary(fk, ik)
         
@@ -517,6 +844,10 @@ def main():
         
         if real_data_results:
             logger.info("✅ Real robot data validation completed")
+            
+        if fastik_results:
+            logger.info("✅ FastIK performance test completed")
+            logger.info(f"🚀 FastIK speedup: {fastik_results.get('speedup', 0):.2f}x")
         
         logger.info("✅ Modular kinematics system validation complete")
         logger.info("📁 Check the examples directory for generated reports and plots")
@@ -525,7 +856,8 @@ def main():
             'forward_kinematics': fk,
             'inverse_kinematics': ik,
             'validation_results': validation_results,
-            'real_data_results': real_data_results
+            'real_data_results': real_data_results,
+            'fastik_results': fastik_results
         }
         
     except Exception as e:

@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'kinemati
 
 try:
     from forward_kinematic import ForwardKinematics
-    from inverse_kinematic import InverseKinematics
+    from inverse_kinematic import FastIK
     from motion_planner import MotionPlanner, PlanningStatus, PlanningStrategy
 except ImportError as e:
     print(f"Import error: {e}")
@@ -135,7 +135,7 @@ class CleanRobotMotionPlanner:
     def __init__(self):
         """Initialize motion planning system."""
         self.fk = ForwardKinematics()
-        self.ik = InverseKinematics(self.fk)
+        self.ik = FastIK(self.fk)
         self.motion_planner = MotionPlanner(self.fk, self.ik)
     
     def get_current_pose_from_joints(self, joints_deg: List[float]) -> RobotPose:
@@ -190,15 +190,16 @@ class CleanRobotMotionPlanner:
             current_pose = self.get_current_pose_from_joints(current_joints_deg)
             T_current = current_pose.to_transformation_matrix()
             
-            # Convert target pose to joint configuration using IK
-            q_target, ik_success = self.ik.solve(T_target)
+            # Convert target pose to joint configuration using enhanced IK
+            q_current = np.deg2rad(current_joints_deg)
+            q_target, ik_success = self.motion_planner.solve_constrained_ik(T_target)
             if not ik_success:
                 return RobotMotionPlan(
                     waypoints=[], 
                     execution_time_sec=0.0,
                     planning_time_ms=0.0,
                     success=False, 
-                    error_message="IK failed for target pose"
+                    error_message="Enhanced IK failed for target pose"
                 )
             
             # Get current joint configuration

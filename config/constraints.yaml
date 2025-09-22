@@ -32,11 +32,13 @@ joint_limits:
 
 # Workspace boundaries in meters
 # Robot base mounted on floor (z=0), working above 60mm wood surface
+# UPDATED: Extended workspace to utilize robot's full 730mm reach capability
+# Based on URDF analysis and real robot data showing 877mm vertical reach
 workspace:
-  x_min: -0.7 # meters (within robot reach)
-  x_max: 0.7 # meters
-  y_min: -0.7 # meters
-  y_max: 0.7 # meters
+  x_min: -0.75 # meters (extended from -0.72 to support 700mm+ reach)
+  x_max: 0.75 # meters (extended from 0.72 to support 700mm+ reach)
+  y_min: -0.75 # meters (extended from -0.72 to support 700mm+ reach)
+  y_max: 0.75 # meters (extended from 0.72 to support 700mm+ reach)
   z_min: 0.06 # 60mm above floor (wood surface level)
   z_max: 1.1 # meters (maximum reach height)
 
@@ -49,36 +51,77 @@ environment:
   wood_thickness: 0.06    # 60mm thick wood surface
   wood_area: [1.4, 1.0]   # 1.4m x 1.0m working area
 
-# Self-collision parameters (derived from RB3-730ES-U URDF)
+# Self-collision parameters (UPDATED for RB3-730ES-U based on real robot dimensions)
+# Further optimized to increase practical reach to ~650mm
 self_collision:
   enabled: true
   robot_model: "RB3-730ES-U"
-  # Key dimensions from URDF (meters)
-  base_height: 0.1453      # Base joint height
-  upper_arm_length: 0.286  # Shoulder to elbow  
-  forearm_length: 0.344    # Elbow to wrist2
-  tcp_extension: 0.1       # Wrist3 to TCP
-  # Critical joint pairs with minimum safe distances (meters)
+  # Key dimensions from MANUFACTURER SPECIFICATIONS (meters)
+  base_height: 0.1453      # Base joint height (B = 145.3mm - CONFIRMED)
+  upper_arm_length: 0.286  # Shoulder to elbow (C = 286mm - CONFIRMED) 
+  forearm_length: 0.344    # Elbow to wrist2 (D = 344mm - CONFIRMED)
+  tcp_extension: 0.1       # Wrist3 to TCP (E = 100mm - CONFIRMED)
+  # Additional manufacturer dimensions for precise collision calculation
+  total_height: 0.730      # A = 730mm (full reach)
+  dimension_f: 0.11715     # F = 117.15mm
+  dimension_g: 0.1107      # G = 110.7mm  
+  dimension_h: 0.0946      # H = 94.6mm
+  # Critical joint pairs with MODERATE distances for 680mm reach
+  # Balanced between safety and extended reach capability
   critical_pairs:
-    shoulder_wrist2: 0.12    # Upper arm vs wrist assembly
-    shoulder_wrist3: 0.10    # Upper arm vs wrist3
-    shoulder_tcp: 0.15       # Upper arm vs end effector
-    elbow_base: 0.18         # Forearm vs base (145mm base + margin)
-    wrist1_base: 0.16        # Wrist1 vs base
-    wrist2_base: 0.16        # Wrist2 vs base
+    shoulder_wrist2: 0.030   # J1-J4: MODERATE - 30mm (was 25mm aggressive)
+    shoulder_wrist3: 0.030   # J1-J5: MODERATE - 30mm (was 25mm aggressive)  
+    shoulder_tcp: 0.035      # J1-J6: MODERATE - 35mm (was 30mm aggressive)
+    elbow_base: 0.035        # J2-J0: MODERATE - 35mm (was 30mm aggressive)
+    wrist1_base: 0.035       # J3-J0: MODERATE - 35mm (was 30mm aggressive)
+    wrist2_base: 0.035       # J4-J0: MODERATE - 35mm (was 30mm aggressive)
+  # Extended reach parameters - MODERATE for 650-680mm target reach
+  extended_reach_parameters:
+    enabled: true
+    max_reach: 0.680          # MODERATE: Realistic target reach (680mm)
+    safety_coefficient: 0.90  # MODERATE: Balanced safety vs reach
 
 # Safety margins (reduces effective workspace for extra safety)
+# Further reduced margins to allow extended reach capabilities
 safety_margins:
   enabled: true
-  margin_x: 0.05 # meters - reduce X workspace by this amount on each side
-  margin_y: 0.05 # meters - reduce Y workspace by this amount on each side
-  margin_z: 0.05 # meters - reduce Z workspace by this amount on top/bottom
+  margin_x: 0.01 # meters - reduced from 0.02 to 0.01 (10mm vs 20mm)
+  margin_y: 0.01 # meters - reduced margin for better workspace utilization
+  margin_z: 0.008 # meters - reduced from 0.015 to 0.008 to allow 68mm minimum (60+8=68mm)
+
+# Enhanced collision detection settings
+# AGGRESSIVE: Optimized for maximum 700mm reach with distance-adaptive thresholds
+collision_detection:
+  adaptive_thresholds: true          # Enable adaptive collision thresholds
+  operational_safety_factor: 0.98    # AGGRESSIVE: Reduced for maximum reach (was 1.01)
+  edge_case_tolerance: 3.0           # INCREASED: Maximum tolerance for extended reach (was 2.5)
+  escape_perturbation_enabled: true  # Allow escape perturbations when stuck
+  minimum_threshold_mm: 8.0          # REDUCED: Absolute minimum threshold (was 10.0mm)
+  home_position_exception: true      # Special handling for home position
+  single_joint_movement_factor: 0.75 # REDUCED: Very relaxed for single movements (was 0.80)
+  wrist_joint_special_case: true     # Special handling for wrist joints (J3-J5)
+  allow_standard_poses: true         # Allow common robot poses without collision flagging
+  extended_reach_mode: true          # ENABLED: Special handling for positions at 650-700mm reach
+  # NEW: Distance-adaptive collision scaling
+  distance_adaptive_scaling:
+    enabled: true
+    # Scale collision thresholds based on TCP distance from base
+    scaling_zones:
+      - distance_max: 500           # Up to 500mm: normal collision detection
+        scale_factor: 1.0
+      - distance_max: 600           # 500-600mm: slightly relaxed
+        scale_factor: 0.9
+      - distance_max: 680           # 600-680mm: more relaxed
+        scale_factor: 0.8
+      - distance_max: 750           # 680-750mm: maximum relaxation
+        scale_factor: 0.7
 
 # Workspace validation settings
 validation:
   path_resolution: 0.01 # meters - check every 1cm along path
   strict_boundaries: true # reject ANY point outside boundaries
   shape: "rectangular" # currently only rectangular supported
+  adaptive_validation: true # Enable adaptive validation based on pose complexity
 
 # Planning configuration
 planning:

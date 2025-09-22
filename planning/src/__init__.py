@@ -13,15 +13,15 @@ This package provides:
 - Integration with the kinematics package for mathematical computation
 
 Architecture:
-- Uses the constraint-free kinematics package for FK/IK computation
+- Uses the high-performance FastIK kinematics implementation for real-time computation
 - Handles all constraint checking, safety validation, and optimization
 - Provides high-level planning interfaces for robotics applications
 
 Author: Robot Control Team
-Version: 1.0.0
+Version: 1.1.0
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __author__ = "Robot Control Team"
 
 """
