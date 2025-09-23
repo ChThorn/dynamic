@@ -1,5 +1,5 @@
 {
-  "timestamp": "2025-09-23 13:25:10",
+  "timestamp": "2025-09-23 14:08:45",
   "calibration_file": "calibration_data/improved_calibration_results.json",
   "application": "pick_and_place",
   "robot_model": "RB3-730ES-U",
@@ -15,9 +15,9 @@
     {
       "pose_number": 1,
       "gripper_position_mm": [
-        198.3,
-        -215.8,
-        278.6
+        458.8,
+        -236.8,
+        82.5
       ],
       "gripper_rotation_rpy_deg": [
         180.0,

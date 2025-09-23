@@ -269,6 +269,10 @@ class PlanningDynamicExecutor:
             # Convert to execution waypoints
             execution_waypoints = self._convert_to_execution_waypoints(plan.waypoints)
             
+            # SPEED FIX: Log when using slower speeds for initial positioning
+            if self.stats['successful_executions'] == 0:
+                self.logger.info("Using reduced speed for initial positioning to home/target")
+            
             # Execute with timing control
             execution_start = time.time()
             success = self._execute_dynamic_trajectory(execution_waypoints)
@@ -278,6 +282,12 @@ class PlanningDynamicExecutor:
             if success:
                 self.stats['successful_executions'] += 1
                 self.logger.info(f"Motion completed in {execution_time:.2f}s")
+                
+                # STABILITY FIX: Add extra stabilization for first motion in sequence
+                # This helps prevent controller warnings when robot moves from arbitrary current position
+                if self.stats['successful_executions'] == 1:
+                    self.logger.debug("First motion complete - ensuring full stabilization")
+                    time.sleep(0.3)  # Extra 300ms for first motion stability
             
             self.stats['planning_times'].append(planning_time)
             self.stats['execution_times'].append(execution_time)
@@ -411,6 +421,12 @@ class PlanningDynamicExecutor:
         """Calculate appropriate speed for waypoint based on motion characteristics"""
         base_speed = 0.5
         
+        # SPEED FIX: Use slower speed for first motion (initial positioning)
+        # This helps prevent controller warnings and improves stability
+        if self.stats['successful_executions'] == 0:  # First motion in sequence
+            base_speed = 0.25  # 50% slower for initial positioning
+            self.logger.debug(f"Using slower speed ({base_speed}) for initial positioning")
+        
         if len(waypoints) < 2:
             return base_speed
         
@@ -422,9 +438,11 @@ class PlanningDynamicExecutor:
             
             # Adjust speed based on movement magnitude
             if joint_movement > 20:  # Large movement
-                return 0.3  # Slower
+                speed_multiplier = 0.6 if self.stats['successful_executions'] == 0 else 0.3
+                return speed_multiplier  # Even slower for large initial movements
             elif joint_movement < 5:  # Small movement
-                return 0.7  # Faster
+                speed_multiplier = 0.5 if self.stats['successful_executions'] == 0 else 0.7
+                return speed_multiplier  # Controlled speed for small initial movements
         
         return base_speed
     
@@ -572,27 +590,32 @@ class PlanningDynamicExecutor:
                                   index: int, timestamps: np.ndarray) -> float:
         """Calculate speed based on polynomial trajectory derivatives"""
         if index == 0 or index >= len(trajectory) - 1:
-            return 0.3  # Slow at start/end
+            # SPEED FIX: Extra slow at start/end, especially for first motion
+            base_start_end_speed = 0.15 if self.stats['successful_executions'] == 0 else 0.3
+            return base_start_end_speed
         
         # Calculate velocity magnitude from numerical derivative
         dt = timestamps[index + 1] - timestamps[index - 1]
         if dt == 0:
-            return 0.5
+            return 0.25 if self.stats['successful_executions'] == 0 else 0.5
         
         # Position change over time interval
         pos_change = np.linalg.norm(trajectory[index + 1] - trajectory[index - 1])
         velocity_magnitude = pos_change / dt
         
+        # SPEED FIX: Reduce all speeds for first motion (initial positioning)
+        speed_reduction = 0.5 if self.stats['successful_executions'] == 0 else 1.0
+        
         # Map velocity to speed multiplier (0.2 to 0.8)
         # Higher velocity -> lower speed multiplier for smoother motion
         if velocity_magnitude > 50:  # High velocity
-            return 0.2
+            return 0.2 * speed_reduction
         elif velocity_magnitude > 20:  # Medium velocity
-            return 0.4
+            return 0.4 * speed_reduction
         elif velocity_magnitude > 5:   # Low velocity
-            return 0.6
+            return 0.6 * speed_reduction
         else:  # Very low velocity
-            return 0.8
+            return 0.8 * speed_reduction
     
     def _calculate_polynomial_acceleration(self, trajectory: np.ndarray, 
                                          index: int, timestamps: np.ndarray) -> float:
@@ -953,6 +976,11 @@ class PlanningDynamicExecutor:
                 if hasattr(self.robot, 'sys_status') and hasattr(self.robot.sys_status, 'robot_state'):
                     if self.robot.sys_status.robot_state == RobotState.IDLE.value:
                         self.logger.info("Robot motion completed")
+                        
+                        # STABILITY FIX: Add stabilization delay after motion completion
+                        # This prevents the controller warning message when transitioning between motions
+                        time.sleep(0.5)  # 500ms final stabilization
+                        self.logger.debug("Robot fully stabilized after motion completion")
                         return True
                 else:
                     # Simulation: assume completion after reasonable delay
@@ -1014,7 +1042,7 @@ class PlanningDynamicExecutor:
                     self.logger.info("Stopping due to user request")
                     return
                 time.sleep(0.05)
-            
+
             # Wait for robot to finish moving (like path_playing_dynamically.py)
             completion_timeout = time.time() + 10.0
             while (self.robot.sys_status.robot_state != RobotState.IDLE.value and 
@@ -1023,8 +1051,11 @@ class PlanningDynamicExecutor:
                     self.logger.info("Stopping due to user request")
                     return
                 time.sleep(0.05)
-            
-            # Small delay between chunks for stability (like path_playing_dynamically.py)
+
+            # STABILITY FIX: Add brief stabilization delay to prevent controller warning
+            # This gives the robot time to fully settle at position before next motion
+            time.sleep(0.2)  # 200ms stabilization delay
+            self.logger.debug("Robot stabilized and ready for next motion")            # Small delay between chunks for stability (like path_playing_dynamically.py)
             time.sleep(0.1)
                 
         except Exception as e:
