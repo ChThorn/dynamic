@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'planning
 try:
     from forward_kinematic import ForwardKinematics
 except ImportError:
-    print("⚠️  Forward kinematics module not available - FK validation will be skipped")
+    print("WARNING: Forward kinematics module not available - FK validation will be skipped")
     ForwardKinematics = None
 
 def pose_to_transformation_matrix(pose):
@@ -42,7 +42,7 @@ def run_pick_place_pose_demo():
     Run the simplified pick and place pose demo.
     Same scenario as pick_and_place_example.py but with interactive pose selection.
     """
-    print("🤖 PICK & PLACE POSE VISUALIZER DEMO")
+    print("PICK & PLACE POSE VISUALIZER DEMO")
     print("="*40)
     print("Interactive pose selection for robot motion planning")
     print()
@@ -59,22 +59,22 @@ def run_pick_place_pose_demo():
             from planning.examples.clean_robot_interface import CleanRobotMotionPlanner
             planning_available = True
         except ImportError as e:
-            print(f"❌ Could not import motion planner: {e}")
-            print("💡 Make sure the planning package is available")
+            print(f"ERROR: Could not import motion planner: {e}")
+            print("NOTE: Make sure the planning package is available")
             return
             
         try:
             from visualizer_tool_TCP import visualizer_tool_TCP
             visualizer_available = True
         except ImportError as e:
-            print(f"❌ Could not import visualizer: {e}")
-            print("💡 Make sure visualizer_tool_TCP.py is in the src directory")
+            print(f"ERROR: Could not import visualizer: {e}")
+            print("NOTE: Make sure visualizer_tool_TCP.py is in the src directory")
             return
         
         # Step 1: Initialize the motion planner (same as pick_and_place_example.py)
-        print("⚙️  STEP 1: Initialize Motion Planner")
+        print("STEP 1: Initialize Motion Planner")
         planner = CleanRobotMotionPlanner()
-        print("✅ Clean robot motion planner initialized")
+        print("SUCCESS: Clean robot motion planner initialized")
         
         # Step 2: Set the same home position as pick_and_place_example.py
         home_joints = [0.0, -60.0, 90.0, 0.0, 30.0, 0.0]  # degrees - same as example
@@ -82,13 +82,13 @@ def run_pick_place_pose_demo():
         home_tcp_pos = home_tcp_pose.position_mm
         home_tcp_rot = home_tcp_pose.orientation_deg
         
-        print(f"\n📍 STEP 2: Home Position (Same as pick_and_place_example.py)")
+        print(f"\nSTEP 2: Home Position (Same as pick_and_place_example.py)")
         print(f"Home joints: {home_joints} degrees")
         print(f"Home TCP: [{home_tcp_pos[0]:.1f}, {home_tcp_pos[1]:.1f}, {home_tcp_pos[2]:.1f}] mm")
         print(f"Home orientation: [{home_tcp_rot[0]:.1f}, {home_tcp_rot[1]:.1f}, {home_tcp_rot[2]:.1f}] degrees")
         
         # Step 3: Interactive pose selection
-        print(f"\n🎯 STEP 3: Interactive Target Pose Selection")
+        print(f"\nSTEP 3: Interactive Target Pose Selection")
         print("Starting Advanced Pose Visualizer...")
         print("Instructions:")
         print("• Click on 2D plots to define target position")
@@ -102,22 +102,22 @@ def run_pick_place_pose_demo():
         
         poses = visualizer.get_poses()
         if not poses:
-            print("❌ No target pose selected. Demo cancelled.")
+            print("ERROR: No target pose selected. Demo cancelled.")
             return
         
         if len(poses) > 1:
-            print(f"⚠️  Multiple poses selected. Using the first pose only.")
+            print(f"WARNING: Multiple poses selected. Using the first pose only.")
         
         target_pose = poses[0]
         target_pos_mm = [p * 1000 for p in target_pose[:3]]  # Convert to mm
         target_rot_deg = np.degrees(R.from_rotvec(target_pose[3:]).as_euler('xyz'))
         
-        print(f"\n✅ Target Pose Selected:")
+        print(f"\nSUCCESS: Target Pose Selected:")
         print(f"Target position: [{target_pos_mm[0]:.1f}, {target_pos_mm[1]:.1f}, {target_pos_mm[2]:.1f}] mm")
         print(f"Target orientation: [{target_rot_deg[0]:.1f}, {target_rot_deg[1]:.1f}, {target_rot_deg[2]:.1f}] degrees")
         
         # Step 4: Plan motion from home to target
-        print(f"\n🚀 STEP 4: Motion Planning (Home → Target)")
+        print(f"\nSTEP 4: Motion Planning (Home → Target)")
         print("Planning motion using enhanced motion planner...")
         
         start_time = time.time()
@@ -125,13 +125,13 @@ def run_pick_place_pose_demo():
         planning_time = time.time() - start_time
         
         if plan.success:
-            print(f"✅ Motion planning SUCCESS!")
+            print(f"SUCCESS: Motion planning SUCCESS!")
             print(f"Planning time: {planning_time:.3f} seconds")
             print(f"Waypoints: {len(plan.waypoints)}")
             print(f"Execution time: {plan.execution_time_sec:.2f} seconds")
             
             # Step 5: Display waypoints with FK validation
-            print(f"\n📋 STEP 5: Generated Waypoints with FK Validation")
+            print(f"\nSTEP 5: Generated Waypoints with FK Validation")
             print("Robot joint waypoints (degrees):")
             print("-" * 50)
             
@@ -143,7 +143,7 @@ def run_pick_place_pose_demo():
                 fk_available = True
             else:
                 fk_available = False
-                print("⚠️  FK validation skipped - forward kinematics module not available")
+                print("WARNING: FK validation skipped - forward kinematics module not available")
             
             for i, waypoint in enumerate(plan.waypoints):
                 wp_type = "Start" if i == 0 else "End" if i == len(plan.waypoints)-1 else f"#{i}"
@@ -171,21 +171,21 @@ def run_pick_place_pose_demo():
             
             # FK Validation summary
             if fk_available:
-                print(f"\n🔍 FK VALIDATION SUMMARY:")
+                print(f"\nFK VALIDATION SUMMARY:")
                 if validation_errors:
-                    print(f"⚠️  Found {len(validation_errors)} waypoints with errors > 1mm:")
+                    print(f"WARNING: Found {len(validation_errors)} waypoints with errors > 1mm:")
                     for error_msg in validation_errors:
-                        print(f"❌ {error_msg}")
-                    print(f"📊 Maximum error: {max_error:.3f}mm")
+                        print(f"ERROR: {error_msg}")
+                    print(f"Maximum error: {max_error:.3f}mm")
                 else:
-                    print(f"✅ All waypoints validated successfully")
-                    print(f"📊 Maximum error: {max_error:.3f}mm (EXCELLENT)")
+                    print(f"SUCCESS: All waypoints validated successfully")
+                    print(f"Maximum error: {max_error:.3f}mm (EXCELLENT)")
             else:
-                print(f"\n🔍 FK VALIDATION: SKIPPED (module not available)")
+                print(f"\nFK VALIDATION: SKIPPED (module not available)")
             print("-" * 50)
             
             # Step 6: Generate robot program
-            print(f"\n🤖 STEP 6: Robot Program Generation")
+            print(f"\nSTEP 6: Robot Program Generation")
             robot_program = plan.generate_robot_program(speed_percent=25.0)
             
             print("Generated robot program:")
@@ -211,70 +211,70 @@ def run_pick_place_pose_demo():
             print("```")
             
             # Step 7: Summary
-            print(f"\n📊 DEMO SUMMARY")
+            print(f"\nDEMO SUMMARY")
             print("="*30)
-            print(f"✅ Motion planning: SUCCESS")
-            print(f"🎯 Target reached: YES")
-            print(f"⏱️  Planning time: {planning_time:.3f}s")
-            print(f"🛤️  Waypoints: {len(plan.waypoints)}")
-            print(f"🤖 Robot ready: YES")
+            print(f"SUCCESS: Motion planning: SUCCESS")
+            print(f"Target reached: YES")
+            print(f"Planning time: {planning_time:.3f}s")
+            print(f"Waypoints: {len(plan.waypoints)}")
+            print(f"Robot ready: YES")
             print()
-            print(f"🎉 Demo completed successfully!")
+            print(f"Demo completed successfully!")
             print(f"The generated waypoints can be executed on the RB3-730ES-U robot.")
             
         else:
             # Calculate distance for detailed diagnostics
             distance_from_base = np.sqrt(target_pos_mm[0]**2 + target_pos_mm[1]**2)
             
-            print(f"❌ Motion planning FAILED!")
+            print(f"ERROR: Motion planning FAILED!")
             print(f"Error: {plan.error_message}")
             print(f"Planning time: {planning_time:.3f} seconds")
             print()
             
             # Detailed diagnostic information
-            print(f"� DIAGNOSTIC INFORMATION:")
+            print(f"DIAGNOSTIC INFORMATION:")
             print(f"Target position: [{target_pos_mm[0]:.1f}, {target_pos_mm[1]:.1f}, {target_pos_mm[2]:.1f}] mm")
             print(f"Distance from robot base: {distance_from_base:.1f} mm")
             print(f"Target orientation: [{target_rot_deg[0]:.1f}, {target_rot_deg[1]:.1f}, {target_rot_deg[2]:.1f}] degrees")
             print()
             
             # Specific reachability analysis based on URDF and updated constraints
-            print(f"📊 REACHABILITY ANALYSIS (URDF + Constraints-Based):")
+            print(f"REACHABILITY ANALYSIS (URDF + Constraints-Based):")
             print(f"RB3-730ES-U: Theoretical reach = 730mm, Workspace limit = 720mm")
             print(f"Effective workspace after safety margins: ~700mm")
             
             if distance_from_base > 720:
-                print(f"❌ UNREACHABLE: Distance ({distance_from_base:.1f}mm) exceeds workspace limit (720mm)")
+                print(f"ERROR: UNREACHABLE: Distance ({distance_from_base:.1f}mm) exceeds workspace limit (720mm)")
                 print(f"   → Move target closer to robot center")
             elif distance_from_base > 650:
-                print(f"⚠️  EXTENDED REACH: Distance ({distance_from_base:.1f}mm) in extended zone (>650mm)")
+                print(f"WARNING: EXTENDED REACH: Distance ({distance_from_base:.1f}mm) in extended zone (>650mm)")
                 print(f"   → Consider moving target within 650mm for better reliability")
             elif distance_from_base > 580:
-                print(f"⚠️  WARNING ZONE: Distance ({distance_from_base:.1f}mm) in warning zone (>580mm)")
+                print(f"WARNING: WARNING ZONE: Distance ({distance_from_base:.1f}mm) in warning zone (>580mm)")
                 print(f"   → Safe zone is within 580mm - some orientations may be difficult")
             else:
-                print(f"✅ SAFE ZONE: Distance ({distance_from_base:.1f}mm) is within safe reach (≤580mm)")
+                print(f"SUCCESS: SAFE ZONE: Distance ({distance_from_base:.1f}mm) is within safe reach (≤580mm)")
                 print(f"   → Issue likely related to orientation or Z-height constraints")
             
             # Z-height analysis
             if target_pos_mm[2] < 150:
-                print(f"❌ Z-HEIGHT: Target Z ({target_pos_mm[2]:.1f}mm) is too low (collision risk)")
+                print(f"ERROR: Z-HEIGHT: Target Z ({target_pos_mm[2]:.1f}mm) is too low (collision risk)")
                 print(f"   → Use Z-height ≥ 200mm")
             elif target_pos_mm[2] > 600:
-                print(f"❌ Z-HEIGHT: Target Z ({target_pos_mm[2]:.1f}mm) may be too high for this reach")
+                print(f"ERROR: Z-HEIGHT: Target Z ({target_pos_mm[2]:.1f}mm) may be too high for this reach")
                 print(f"   → Try Z-height between 200-500mm")
             else:
-                print(f"✅ Z-HEIGHT: Target Z ({target_pos_mm[2]:.1f}mm) is reasonable")
+                print(f"SUCCESS: Z-HEIGHT: Target Z ({target_pos_mm[2]:.1f}mm) is reasonable")
             
             # Orientation analysis
             if abs(target_rot_deg[0]) > 160 or abs(target_rot_deg[1]) > 160:
-                print(f"❌ ORIENTATION: Extreme rotation angles may be unreachable")
+                print(f"ERROR: ORIENTATION: Extreme rotation angles may be unreachable")
                 print(f"   → Try simpler orientations closer to [180, 0, 0] degrees")
             else:
-                print(f"✅ ORIENTATION: Target orientation appears reasonable")
+                print(f"SUCCESS: ORIENTATION: Target orientation appears reasonable")
             
             print()
-            print(f"💡 SPECIFIC RECOMMENDATIONS:")
+            print(f"SPECIFIC RECOMMENDATIONS:")
             
             # Generate specific recommendations based on the failure
             if distance_from_base > 500:
@@ -296,16 +296,16 @@ def run_pick_place_pose_demo():
             print(f"• Avoid the red 'MAX' zone at the edge of robot reach")
         
     except ImportError as e:
-        print(f"❌ Could not import required modules: {e}")
-        print("💡 Make sure the planning and monitoring packages are available")
+        print(f"ERROR: Could not import required modules: {e}")
+        print("NOTE: Make sure the planning and monitoring packages are available")
     except Exception as e:
-        print(f"❌ Error during demo: {e}")
+        print(f"ERROR: Error during demo: {e}")
         import traceback
         traceback.print_exc()
 
 def main():
     """Run the simplified pick and place pose demo."""
-    print("🤖 SIMPLIFIED PICK & PLACE POSE DEMO")
+    print("SIMPLIFIED PICK & PLACE POSE DEMO")
     print("Interactive pose selection for robot motion planning")
     print("Based on pick_and_place_example.py scenario")
     print()
@@ -313,9 +313,9 @@ def main():
     try:
         run_pick_place_pose_demo()
     except KeyboardInterrupt:
-        print("\n\n👋 Demo cancelled by user")
+        print("\n\nDemo cancelled by user")
     except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
+        print(f"\nERROR: Unexpected error: {e}")
 
 if __name__ == "__main__":
     main()

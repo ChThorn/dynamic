@@ -64,7 +64,7 @@ def create_architecture_summary():
         mock_wp.joint_positions_deg = position.tolist()
         mock_waypoints.append(mock_wp)
     
-    executor = PlanningDynamicExecutor(operation_mode="simulation")
+    executor = PlanningDynamicExecutor(robot_ip="192.168.0.10", operation_mode="simulation")
     final_waypoints = executor._convert_to_execution_waypoints(mock_waypoints, total_time)
     
     final_times = np.array([wp.timestamp for wp in final_waypoints])
@@ -182,7 +182,8 @@ RESULTS:
     print(f"3. Execution Smoothing: {len(final_positions)} points ({len(final_positions)/len(raw_waypoints):.1f}x)")
     print(f"Total Improvement: {len(final_positions)/len(raw_waypoints):.1f}x waypoint density")
     
-    plt.show()
+    # Close the figure to prevent GUI display issues
+    plt.close(fig)
 
 if __name__ == "__main__":
     create_architecture_summary()

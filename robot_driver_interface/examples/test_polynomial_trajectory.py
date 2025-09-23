@@ -113,11 +113,11 @@ def test_polynomial_vs_linear():
     
     print("\n" + "=" * 70)
     print("POLYNOMIAL TRAJECTORY TEST COMPLETE")
-    print("✅ Quintic polynomial interpolation implemented")
-    print("✅ Smooth velocity and acceleration profiles")
-    print("✅ Reduced jerk compared to linear interpolation")
-    print("✅ Dense waypoint sampling for smooth motion")
-    print("✅ Adaptive speed and acceleration calculation")
+    print("[PASS] Quintic polynomial interpolation implemented")
+    print("[PASS] Smooth velocity and acceleration profiles")
+    print("[PASS] Reduced jerk compared to linear interpolation")
+    print("[PASS] Dense waypoint sampling for smooth motion")
+    print("[PASS] Adaptive speed and acceleration calculation")
     print("=" * 70)
 
 def create_linear_trajectory(planning_waypoints, total_time: float) -> List[ExecutionWaypoint]:
@@ -304,7 +304,7 @@ def test_polynomial_features(executor):
     acceleration = executor._calculate_polynomial_acceleration(test_trajectory, 5, test_times)
     print(f"  Calculated acceleration: {acceleration:.3f}")
     
-    print("✅ All polynomial features tested successfully")
+    print("Testing polynomial features tested successfully")
 
 if __name__ == "__main__":
     test_polynomial_vs_linear()

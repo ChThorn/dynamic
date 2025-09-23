@@ -40,10 +40,10 @@ def demonstrate_safety_first_operation():
     # Step 2: Initialize robot components
     print("\n2. Connecting to Robot Hardware")
     if not executor.initialize():
-        print("❌ Robot initialization failed")
+        print("ERROR: Robot initialization failed")
         return False
     
-    print(f"✅ Robot initialized in {executor.get_operation_mode().upper()} mode")
+    print(f"SUCCESS: Robot initialized in {executor.get_operation_mode().upper()} mode")
     
     # Step 3: Test in simulation mode (safe)
     print("\n3. Testing Motion in SIMULATION Mode (Safe)")
@@ -51,12 +51,12 @@ def demonstrate_safety_first_operation():
     
     print("   Executing test motion in simulation...")
     success = executor.plan_and_execute_motion(target1)
-    print(f"   Motion result: {'✅ Success' if success else '❌ Failed'}")
+    print(f"   Motion result: {'SUCCESS' if success else 'FAILED'}")
     
     # Step 4: User confirmation before real mode
     print("\n4. Switching to REAL Robot Mode")
-    print("   ⚠️  WARNING: This will enable REAL PHYSICAL MOTIONS")
-    print("   ⚠️  Ensure workspace is clear and safety systems are active")
+    print("   WARNING: This will enable REAL PHYSICAL MOTIONS")
+    print("   WARNING: Ensure workspace is clear and safety systems are active")
     
     # In a real application, you would get user confirmation here
     user_confirmed = input("\n   Type 'ENABLE_REAL_MODE' to activate real robot: ").strip()
@@ -68,36 +68,36 @@ def demonstrate_safety_first_operation():
         # Step 5: Switch to real mode with safety validation
         print("\n   Switching to REAL mode...")
         if executor.set_operation_mode("real"):
-            print(f"   ✅ Robot now in {executor.get_operation_mode().upper()} mode")
+            print(f"   SUCCESS: Robot now in {executor.get_operation_mode().upper()} mode")
             
             # Step 6: Execute real motion (with safety warnings)
             print("\n5. Executing Motion in REAL Mode")
-            print("   ⚠️  REAL PHYSICAL MOTION WILL OCCUR")
+            print("   WARNING: REAL PHYSICAL MOTION WILL OCCUR")
             
             target2 = create_planning_target(350, 150, 200)
             success = executor.plan_and_execute_motion(target2)
-            print(f"   Motion result: {'✅ Success' if success else '❌ Failed'}")
+            print(f"   Motion result: {'SUCCESS' if success else 'FAILED'}")
             
         else:
-            print("   ❌ Failed to switch to real mode")
+            print("   ERROR: Failed to switch to real mode")
     
     # Step 7: Return to safe mode
     print("\n6. Returning to Safe Mode")
     if executor.set_operation_mode("simulation"):
-        print(f"   ✅ Robot returned to {executor.get_operation_mode().upper()} mode")
+        print(f"   SUCCESS: Robot returned to {executor.get_operation_mode().upper()} mode")
     
     # Step 8: Clean shutdown
     print("\n7. Safe Shutdown")
     executor.shutdown()
-    print("   ✅ Robot safely shut down")
+    print("   SUCCESS: Robot safely shut down")
     
     print("\n" + "=" * 60)
     print("SAFETY-FIRST DEMONSTRATION COMPLETE")
     print("Key Safety Features:")
-    print("✅ Default simulation mode")
-    print("✅ Explicit real mode activation required")
-    print("✅ Safety warnings for real operations")
-    print("✅ Mode validation and logging")
+    print("[PASS] Default simulation mode")
+    print("[PASS] Explicit real mode activation required")
+    print("[PASS] Safety warnings for real operations")
+    print("[PASS] Mode validation and logging")
     print("=" * 60)
     
     return True
@@ -109,10 +109,10 @@ def demonstrate_mode_switching():
     print("MODE SWITCHING SAFETY PATTERNS")
     print("=" * 40)
     
-    executor = PlanningDynamicExecutor()
+    executor = PlanningDynamicExecutor(robot_ip="192.168.0.10", operation_mode="simulation")
     
     if not executor.initialize():
-        print("❌ Initialization failed")
+        print("ERROR: Initialization failed")
         return
     
     # Show current mode
@@ -146,8 +146,8 @@ if __name__ == "__main__":
         demonstrate_mode_switching()
         
     except KeyboardInterrupt:
-        print("\n⚠️  Operation interrupted by user")
+        print("\nOperation interrupted by user")
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\nERROR: {e}")
     finally:
         print("\nExample completed")

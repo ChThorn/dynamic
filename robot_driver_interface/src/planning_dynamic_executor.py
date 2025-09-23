@@ -807,21 +807,30 @@ class PlanningDynamicExecutor:
             return False
     
     def _estimate_consumption_rate(self):
-        """Estimate robot's waypoint consumption rate"""
+        """Estimate robot's waypoint consumption rate with smoothing"""
         if not self.execution_start_time or self.points_in_buffer == 0:
             return 10  # Default estimate
         
         elapsed = time.time() - self.execution_start_time
         if elapsed > 0:
-            # Calculate actual consumption rate
+            # Calculate raw consumption rate
             consumed_points = self.initial_buffer_points - self.points_in_buffer
-            consumption_rate = consumed_points / elapsed
+            raw_consumption_rate = consumed_points / elapsed
+            
+            # Apply exponential moving average smoothing to avoid jumpy estimates
+            if not hasattr(self, 'smoothed_rate'):
+                # Initialize smoothed rate with first measurement
+                self.smoothed_rate = raw_consumption_rate
+            else:
+                # Smooth the rate using exponential moving average
+                alpha = 0.3  # Smoothing factor (0.3 gives good balance of responsiveness and stability)
+                self.smoothed_rate = alpha * raw_consumption_rate + (1 - alpha) * self.smoothed_rate
             
             # Log consumption rate updates for debugging
-            if consumption_rate != 10:  # Only log when different from default
-                self.logger.debug(f"Adaptive consumption rate: {consumption_rate:.2f} points/sec (elapsed: {elapsed:.1f}s)")
+            if abs(raw_consumption_rate - 10) > 0.1:  # Only log when different from default
+                self.logger.debug(f"Consumption rate - Raw: {raw_consumption_rate:.2f}, Smoothed: {self.smoothed_rate:.2f} points/sec")
             
-            return max(consumption_rate, 1.0)  # Minimum 1 point/second for safety
+            return max(self.smoothed_rate, 1.0)  # Minimum 1 point/second for safety
         return 10
 
     def _wait_for_buffer_space(self, timeout: float = 5.0) -> bool:
