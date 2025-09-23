@@ -319,7 +319,9 @@ class MotionPlanner:
         try:
             test_config = np.zeros(6)
             test_tcp = np.array([0, 0, 0.8])
-            result = self.collision_checker.check_configuration_collision(test_config, test_tcp)
+            result = self.collision_checker.check_configuration_collision(
+                test_config, test_tcp, self.fk.compute_forward_kinematics
+            )
             if result.is_collision:
                 collision_issues.append("Home position incorrectly flagged as collision")
         except Exception as e:

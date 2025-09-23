@@ -147,11 +147,14 @@ class EnhancedCollisionChecker:
         return CollisionResult(False, CollisionType.NONE, "Workspace limits OK")
     
     def check_floor_collision(self, tcp_position: np.ndarray, joint_positions: List[np.ndarray]) -> CollisionResult:
-        """Check collision with floor and wood surface constraints."""
+        """Check collision with floor and wood surface constraints with enhanced elbow detection."""
         # Get environment constraints from config
         env_config = self.config.get('environment', {})
         floor_level = env_config.get('floor_level', 0.0)        # Robot base at z=0
         wood_thickness = env_config.get('wood_thickness', 0.06)  # 60mm wood surface
+        
+        # Enhanced safety margin for elbow (most common collision point)
+        elbow_safety_margin = 0.02  # Additional 20mm safety margin for elbow clearance
         
         # Check if TCP is below wood surface (minimum working height)
         if tcp_position[2] < wood_thickness:
@@ -163,14 +166,30 @@ class EnhancedCollisionChecker:
             )
         
         # Check if any joint position is below floor level (robot base is at z=0)
+        joint_names = ['Base', 'Shoulder', 'Elbow', 'Wrist1', 'Wrist2', 'Wrist3', 'TCP']
+        
         for i, pos in enumerate(joint_positions):
-            if pos[2] < floor_level:
-                return CollisionResult(
-                    is_collision=True,
-                    collision_type=CollisionType.FLOOR_COLLISION,
-                    details=f"Joint {i+1} below floor level: {pos[2]*1000:.1f}mm < 0mm",
-                    collision_point=pos.tolist()
-                )
+            # Special handling for elbow (joint index 2)
+            if i == 2:  # Elbow joint
+                # Apply stricter threshold for elbow (wood surface + safety margin)
+                min_elbow_height = wood_thickness + elbow_safety_margin
+                if pos[2] < min_elbow_height:
+                    return CollisionResult(
+                        is_collision=True,
+                        collision_type=CollisionType.FLOOR_COLLISION,
+                        details=f"ELBOW below safe height: {pos[2]*1000:.1f}mm < {min_elbow_height*1000:.1f}mm (wood+margin)",
+                        collision_point=pos.tolist()
+                    )
+            else:
+                # Standard floor collision check for other joints
+                if pos[2] < floor_level:
+                    joint_name = joint_names[i] if i < len(joint_names) else f"Joint{i+1}"
+                    return CollisionResult(
+                        is_collision=True,
+                        collision_type=CollisionType.FLOOR_COLLISION,
+                        details=f"{joint_name} below floor level: {pos[2]*1000:.1f}mm < 0mm",
+                        collision_point=pos.tolist()
+                    )
         
         return CollisionResult(False, CollisionType.NONE, "Floor/surface collision OK")
     
@@ -566,8 +585,14 @@ class EnhancedCollisionChecker:
         if result.is_collision:
             return result
         
-        # 3. Check floor/table collision (simplified with TCP only for now)
-        joint_positions = [tcp_position]  # Simplified: use TCP position
+        # 3. Check floor/table collision with PROPER joint position calculation
+        if fk_function is not None:
+            # Calculate all joint positions for comprehensive collision detection
+            joint_positions = self._get_joint_positions(joint_angles, fk_function)
+        else:
+            # Fallback: use only TCP position (less accurate but better than nothing)
+            joint_positions = [tcp_position]
+            
         result = self.check_floor_collision(tcp_position, joint_positions)
         if result.is_collision:
             return result

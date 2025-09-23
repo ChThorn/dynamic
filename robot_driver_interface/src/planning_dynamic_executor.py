@@ -106,14 +106,14 @@ class PlanningDynamicExecutor:
     """
     
     def __init__(self, robot_ip: str, operation_mode: str = "simulation", 
-                 execution_mode: str = "blend", chunk_size: int = 12):
+                 execution_mode: str = "blend", chunk_size: int = 100):
         """
         Initialize the planning dynamic executor
         
         Args:
             robot_ip: Robot IP address
             execution_mode: "blend" for smooth motion, "point" for point-to-point
-            chunk_size: Number of waypoints per chunk (default: 12, optimized for pre-buffering)
+            chunk_size: Number of waypoints per chunk (default: 100, optimized chunking)
             operation_mode: "simulation" for safe mode (default), "real" for real robot operation
         """
         self.robot_ip = robot_ip
@@ -135,7 +135,7 @@ class PlanningDynamicExecutor:
         self.execution_start_time = None  # Track execution start time for progress feedback
         
         # Pre-buffering execution parameters (optimized for continuous motion)
-        self.chunk_size = chunk_size  # Configurable waypoints per chunk (default: 8)
+        self.chunk_size = chunk_size  # Configurable waypoints per chunk (default: 100 - optimized chunking)
         self.max_buffer_size = 20  # Maximum waypoints in robot buffer at once
         self.prefill_ratio = 0.75  # Fill 75% of buffer before starting motion
         self.buffer_low_threshold = 0.4  # Stream new chunks when buffer < 40% full
