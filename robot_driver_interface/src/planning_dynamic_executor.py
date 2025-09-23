@@ -22,11 +22,19 @@ from dataclasses import dataclass
 from collections import deque
 import numpy as np
 
-# Add paths for planning module imports
-sys.path.append('../planning/src')
-sys.path.append('../planning/examples')
-sys.path.append('../kinematics/src')
-sys.path.append('../robot_driver')
+# Add paths for planning module imports - using absolute paths for reliability
+import os
+current_dir = os.path.dirname(os.path.abspath(__file__))
+base_dir = os.path.join(current_dir, '..', '..')
+planning_src = os.path.join(base_dir, 'planning', 'src')
+planning_examples = os.path.join(base_dir, 'planning', 'examples')
+kinematics_src = os.path.join(base_dir, 'kinematics', 'src')
+robot_driver_dir = os.path.join(base_dir, 'robot_driver')
+
+sys.path.append(planning_src)
+sys.path.append(planning_examples)
+sys.path.append(kinematics_src)
+sys.path.append(robot_driver_dir)
 
 # Import planning components
 try:
@@ -193,7 +201,7 @@ class PlanningDynamicExecutor:
             
             # Initialize motion planner
             if PLANNING_AVAILABLE:
-                self.planner = CleanRobotMotionPlanner(robot_ip=self.robot_ip)
+                self.planner = CleanRobotMotionPlanner()
                 self.logger.info("Motion planner initialized")
             else:
                 self.logger.warning("Motion planner not available - will use direct execution")
@@ -245,9 +253,9 @@ class PlanningDynamicExecutor:
             planning_start = time.time()
             
             plan = self.planner.plan_motion(
-                tcp_position_mm=target.tcp_position_mm,
-                tcp_rotation_deg=target.tcp_rotation_deg,
-                start_joints_deg=start_joints
+                current_joints_deg=start_joints,
+                target_position_mm=target.tcp_position_mm,
+                target_orientation_deg=target.tcp_rotation_deg
             )
             
             planning_time = time.time() - planning_start
@@ -357,8 +365,8 @@ class PlanningDynamicExecutor:
         total_angular_distance = 0
         
         for i in range(1, len(planning_waypoints)):
-            joint_diff = np.array(planning_waypoints[i].joint_positions_deg) - \
-                         np.array(planning_waypoints[i-1].joint_positions_deg)
+            joint_diff = np.array(planning_waypoints[i].joints_deg) - \
+                         np.array(planning_waypoints[i-1].joints_deg)
             total_angular_distance += np.linalg.norm(joint_diff)
         
         # Assume comfortable speed of 30-60 deg/s
@@ -391,7 +399,7 @@ class PlanningDynamicExecutor:
                 speed = self._calculate_waypoint_speed(planning_waypoints, i)
                 
                 execution_waypoints.append(ExecutionWaypoint(
-                    joints_deg=wp.joint_positions_deg,
+                    joints_deg=wp.joints_deg,
                     timestamp=timestamp,
                     speed=speed,
                     acceleration=0.8
@@ -408,8 +416,8 @@ class PlanningDynamicExecutor:
         
         # Calculate joint movement magnitude
         if index > 0:
-            prev_joints = np.array(waypoints[index-1].joint_positions_deg)
-            curr_joints = np.array(waypoints[index].joint_positions_deg)
+            prev_joints = np.array(waypoints[index-1].joints_deg)
+            curr_joints = np.array(waypoints[index].joints_deg)
             joint_movement = np.linalg.norm(curr_joints - prev_joints)
             
             # Adjust speed based on movement magnitude
@@ -441,7 +449,7 @@ class PlanningDynamicExecutor:
             return []
         
         # Extract joint positions
-        joint_positions = np.array([wp.joint_positions_deg for wp in planning_waypoints])
+        joint_positions = np.array([wp.joints_deg for wp in planning_waypoints])
         num_joints = joint_positions.shape[1]
         num_waypoints = len(planning_waypoints)
         
@@ -637,31 +645,51 @@ class PlanningDynamicExecutor:
             self.is_executing = False
     
     def _execute_blend_motion(self, waypoints: List[ExecutionWaypoint]) -> bool:
-        """Execute using PRE-BUFFERED blend motion for continuous smooth trajectory"""
+        """
+        Execute blend motion using safe chunked approach
+        
+        This method follows the proven pattern from path_playing_dynamically.py:
+        - Each chunk is cleared before adding points
+        - Chunks are executed immediately 
+        - No buffer overflow possible
+        """
         try:
-            self.logger.info(f"Starting pre-buffered blend execution: {len(waypoints)} waypoints, chunk size: {self.chunk_size}")
+            self.logger.info(f"Starting safe chunked blend execution: {len(waypoints)} waypoints, chunk size: {self.chunk_size}")
             
-            # PRE-BUFFERING STRATEGY: Fill robot buffer before starting motion
-            total_waypoints = len(waypoints)
+            # Create waypoint chunks for safe buffer management
             waypoint_chunks = self._create_waypoint_chunks(waypoints)
+            self.logger.info(f"Created {len(waypoint_chunks)} chunks for execution")
             
-            self.logger.info(f"Created {len(waypoint_chunks)} chunks for streaming execution")
+            # Execute chunks sequentially (proven safe approach)
+            total_chunks = len(waypoint_chunks)
+            for i, chunk in enumerate(waypoint_chunks):
+                if self.stop_requested:
+                    self.logger.info("Execution stopped by user request")
+                    return False
+                
+                # Execute chunk with proven safe pattern
+                success = self._execute_waypoint_chunk(chunk, is_first_chunk=(i == 0))
+                if not success:
+                    self.logger.error(f"Failed to execute chunk {i+1}/{total_chunks}")
+                    return False
+                
+                # Wait for chunk completion before next chunk
+                self._wait_for_chunk_completion()
+                
+                # Progress reporting
+                progress = ((i + 1) / total_chunks) * 100
+                self.logger.info(f"Execution progress: {progress:.1f}% ({i+1}/{total_chunks} chunks)")
             
-            # Phase 1: PRE-FILL robot buffer (most robust approach)
-            if not self._prefill_robot_buffer(waypoint_chunks):
-                self.logger.error("Failed to pre-fill robot buffer")
+            # Final completion wait
+            if not self._wait_for_motion_completion():
+                self.logger.warning("Motion completion timeout")
                 return False
-                
-            # Phase 2: START motion and stream remaining chunks
-            if not self._start_motion_and_stream(waypoint_chunks):
-                self.logger.error("Failed during streaming execution")
-                return False
-                
-            self.logger.info("Pre-buffered blend motion completed successfully")
+            
+            self.logger.info("Safe chunked blend motion completed successfully")
             return True
             
         except Exception as e:
-            self.logger.error(f"Pre-buffered blend motion failed: {e}")
+            self.logger.error(f"Safe chunked blend motion failed: {e}")
             return False
     
     def _create_waypoint_chunks(self, waypoints: List[ExecutionWaypoint]) -> List[List[ExecutionWaypoint]]:
@@ -756,6 +784,11 @@ class PlanningDynamicExecutor:
             
             # Initialize buffer tracking for consumption rate estimation
             self.initial_buffer_points = self.points_in_buffer
+            self.last_chunk_time = self.execution_start_time  # Initialize timing
+            
+            # Reset any previous consumption rate estimates for clean start
+            if hasattr(self, 'smoothed_rate'):
+                delattr(self, 'smoothed_rate')
             
             # Stream remaining chunks while robot executes
             total_chunks = len(waypoint_chunks)
@@ -807,46 +840,55 @@ class PlanningDynamicExecutor:
             return False
     
     def _estimate_consumption_rate(self):
-        """Estimate robot's waypoint consumption rate with smoothing"""
+        """Estimate robot's waypoint consumption rate with conservative bounds"""
         if not self.execution_start_time or self.points_in_buffer == 0:
-            return 10  # Default estimate
+            return 8  # Conservative default estimate
         
         elapsed = time.time() - self.execution_start_time
-        if elapsed > 0:
+        if elapsed > 0.5:  # Only estimate after some execution time
             # Calculate raw consumption rate
-            consumed_points = self.initial_buffer_points - self.points_in_buffer
+            consumed_points = max(0, self.initial_buffer_points - self.points_in_buffer)
             raw_consumption_rate = consumed_points / elapsed
             
-            # Apply exponential moving average smoothing to avoid jumpy estimates
+            # Apply exponential moving average smoothing with conservative bounds
             if not hasattr(self, 'smoothed_rate'):
-                # Initialize smoothed rate with first measurement
-                self.smoothed_rate = raw_consumption_rate
+                # Initialize with conservative value
+                self.smoothed_rate = min(raw_consumption_rate, 15.0)  # Cap initial rate
             else:
                 # Smooth the rate using exponential moving average
-                alpha = 0.3  # Smoothing factor (0.3 gives good balance of responsiveness and stability)
-                self.smoothed_rate = alpha * raw_consumption_rate + (1 - alpha) * self.smoothed_rate
+                alpha = 0.2  # More conservative smoothing factor
+                new_rate = alpha * raw_consumption_rate + (1 - alpha) * self.smoothed_rate
+                self.smoothed_rate = max(1.0, min(new_rate, 20.0))  # Bound between 1-20 points/sec
             
             # Log consumption rate updates for debugging
-            if abs(raw_consumption_rate - 10) > 0.1:  # Only log when different from default
+            if abs(raw_consumption_rate - 8) > 0.1:  # Only log when different from default
                 self.logger.debug(f"Consumption rate - Raw: {raw_consumption_rate:.2f}, Smoothed: {self.smoothed_rate:.2f} points/sec")
             
-            return max(self.smoothed_rate, 1.0)  # Minimum 1 point/second for safety
-        return 10
+            return self.smoothed_rate
+        return 8  # Conservative default
 
     def _wait_for_buffer_space(self, timeout: float = 5.0) -> bool:
-        """Simplified buffer management without querying robot"""
+        """Improved buffer management with robust timing calculations"""
         try:
             # Estimate based on time and adaptive consumption rate
             points_per_second = self._estimate_consumption_rate()
             elapsed = time.time() - self.last_chunk_time
-            estimated_consumed = elapsed * points_per_second
+            estimated_consumed = max(0, elapsed * points_per_second)  # Ensure non-negative
             
-            if self.points_in_buffer - estimated_consumed < self.chunk_size:
+            # Update estimated buffer state
+            current_buffer_estimate = max(0, self.points_in_buffer - estimated_consumed)
+            
+            # Check if we have sufficient space
+            if current_buffer_estimate < self.chunk_size:
                 return True  # Space available
             
-            # Wait a calculated amount
-            wait_time = (self.chunk_size - (self.points_in_buffer - estimated_consumed)) / points_per_second
-            time.sleep(min(wait_time, 0.5))
+            # Calculate safe wait time (ensure positive values)
+            points_to_consume = max(1, current_buffer_estimate - self.chunk_size + 1)
+            wait_time = points_to_consume / max(points_per_second, 1.0)
+            
+            # Cap wait time to reasonable bounds
+            safe_wait_time = max(0.01, min(wait_time, 0.3))  # 10ms to 300ms
+            time.sleep(safe_wait_time)
             return True
             
         except Exception as e:
@@ -873,8 +915,21 @@ class PlanningDynamicExecutor:
                         break
             
             # Update buffer tracking with actual points added
+            current_time = time.time()
+            
+            # Estimate points consumed since last update
+            if hasattr(self, 'last_chunk_time') and self.last_chunk_time > 0:
+                elapsed = current_time - self.last_chunk_time
+                estimated_consumed = elapsed * self._estimate_consumption_rate()
+                self.points_in_buffer = max(0, self.points_in_buffer - estimated_consumed)
+            
+            # Add new points
             self.points_in_buffer += points_added
-            self.last_chunk_time = time.time()
+            self.last_chunk_time = current_time
+            
+            # Periodically reset buffer estimate to prevent drift
+            if chunk_number % 5 == 0:  # Reset every 5 chunks
+                self.points_in_buffer = min(self.points_in_buffer, 50)  # Cap at reasonable maximum
             
             if points_added < len(chunk):
                 self.logger.warning(f"Only added {points_added}/{len(chunk)} points from chunk {chunk_number}")
@@ -920,9 +975,8 @@ class PlanningDynamicExecutor:
     def _execute_waypoint_chunk(self, chunk: List[ExecutionWaypoint], is_first_chunk: bool = False) -> bool:
         """Execute a single chunk of waypoints"""
         try:
-            # Clear blend buffer for first chunk or if continuing from previous
-            if is_first_chunk:
-                self.robot.move_joint_blend_clear()
+            # CRITICAL: Clear blend buffer for EVERY chunk (matches working path_playing_dynamically.py)
+            self.robot.move_joint_blend_clear()
             
             # Add waypoints in chunk to blend motion
             for i, wp in enumerate(chunk):
@@ -936,12 +990,13 @@ class PlanningDynamicExecutor:
                     self.logger.error(f"Failed to add waypoint {i+1} in chunk to blend motion")
                     return False
             
-            # Execute the chunk
+            # Execute the chunk immediately (matches working pattern)
             success = self.robot.move_joint_blend_move_point()
             if not success:
                 self.logger.error("Failed to execute waypoint chunk")
                 return False
             
+            self.logger.debug(f"Executed chunk with {len(chunk)} points successfully")
             return True
             
         except Exception as e:

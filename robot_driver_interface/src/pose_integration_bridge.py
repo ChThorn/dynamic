@@ -17,9 +17,19 @@ Date: September 22, 2025
 """
 
 import numpy as np
+import sys
+import os
 from scipy.spatial.transform import Rotation as R
 from typing import List, Tuple, Optional, Union
 import logging
+
+# Add paths for imports - using absolute paths for reliability
+current_dir = os.path.dirname(os.path.abspath(__file__))
+base_dir = os.path.join(current_dir, '..', '..')
+monitoring_dir = os.path.join(base_dir, 'monitoring')
+
+sys.path.append(current_dir)
+sys.path.append(monitoring_dir)
 
 # Import the core modules
 from planning_dynamic_executor import PlanningDynamicExecutor, PlanningTarget, create_planning_target
