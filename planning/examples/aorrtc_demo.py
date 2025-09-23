@@ -34,19 +34,19 @@ from trajectory_planner import TrajectoryPlanner
 def run_aorrtc_demo():
     """Run comprehensive AORRTC motion planning demonstration."""
     
-    print("🚀 AORRTC Enhanced Motion Planning System Demo")
+    print("AORRTC Enhanced Motion Planning System Demo")
     print("=" * 60)
     
     # Initialize system components
-    print("\n📋 Initializing System Components...")
+    print("\nInitializing System Components...")
     fk = ForwardKinematics()
     ik = InverseKinematics(fk)
     motion_planner = MotionPlanner(fk, ik)
     aorrtc_planner = AOTRRCPathPlanner(fk, ik)
     
-    print("✅ Kinematics engines initialized")
-    print("✅ AORRTC path planner ready")
-    print("✅ Motion planning coordinator ready")
+    print("Kinematics engines initialized")
+    print("AORRTC path planner ready")
+    print("Motion planning coordinator ready")
     
     # Define test scenarios
     scenarios = {
@@ -71,7 +71,7 @@ def run_aorrtc_demo():
     
     # Run test scenarios
     for scenario_name, config in scenarios.items():
-        print(f"\n🎯 Testing Scenario: {scenario_name}")
+        print(f"\nTesting Scenario: {scenario_name}")
         print("-" * 40)
         
         q_start = config["start"]
@@ -81,7 +81,7 @@ def run_aorrtc_demo():
         scenario_results = {}
         
         # Test 1: AORRTC Path Planning
-        print("📍 AORRTC Path Planning...")
+        print("AORRTC Path Planning...")
         start_time = time.time()
         aorrtc_result = aorrtc_planner.plan_aorrtc_path(
             q_start, q_goal, max_iterations=max_iter
@@ -89,19 +89,19 @@ def run_aorrtc_demo():
         aorrtc_time = time.time() - start_time
         
         if aorrtc_result.success:
-            print(f"   ✅ Success: {len(aorrtc_result.path)} waypoints")
-            print(f"   ⏱️  Time: {aorrtc_time*1000:.1f}ms")
+            print(f"   Success: {len(aorrtc_result.path)} waypoints")
+            print(f"   Time: {aorrtc_time*1000:.1f}ms")
             if aorrtc_result.validation_results:
                 vr = aorrtc_result.validation_results
-                print(f"   🔢 Iterations: {vr['iterations']}")
-                print(f"   🌳 Tree sizes: {vr['tree_sizes']}")
+                print(f"   Iterations: {vr['iterations']}")
+                print(f"   Tree sizes: {vr['tree_sizes']}")
         else:
-            print(f"   ❌ Failed: {aorrtc_result.error_message}")
+            print(f"   FAILED: {aorrtc_result.error_message}")
         
         scenario_results['aorrtc'] = aorrtc_result
         
         # Test 2: Enhanced Motion Planning with AORRTC
-        print("🎯 Enhanced Motion Planning (AORRTC)...")
+        print("Enhanced Motion Planning (AORRTC)...")
         enhanced_result = motion_planner.plan_motion(
             q_start, q_goal,
             strategy=PlanningStrategy.JOINT_SPACE,
@@ -110,17 +110,17 @@ def run_aorrtc_demo():
         )
         
         if enhanced_result.status.value == 'success':
-            print(f"   ✅ Success: {enhanced_result.plan.num_waypoints} waypoints")
-            print(f"   ⏱️  Planning time: {enhanced_result.planning_time:.3f}s")
+            print(f"   Success: {enhanced_result.plan.num_waypoints} waypoints")
+            print(f"   Planning time: {enhanced_result.planning_time:.3f}s")
             if enhanced_result.plan.trajectory:
-                print(f"   📊 Trajectory points: {len(enhanced_result.plan.trajectory.points)}")
+                print(f"   Trajectory points: {len(enhanced_result.plan.trajectory.points)}")
         else:
-            print(f"   ❌ Failed: {enhanced_result.error_message}")
+            print(f"   FAILED: {enhanced_result.error_message}")
         
         scenario_results['enhanced'] = enhanced_result
         
         # Test 3: Regular RRT Comparison
-        print("🔄 Regular RRT Planning...")
+        print("Regular RRT Planning...")
         regular_result = motion_planner.plan_motion(
             q_start, q_goal,
             strategy=PlanningStrategy.JOINT_SPACE,
@@ -129,16 +129,16 @@ def run_aorrtc_demo():
         )
         
         if regular_result.status.value == 'success':
-            print(f"   ✅ Success: {regular_result.plan.num_waypoints} waypoints")
-            print(f"   ⏱️  Planning time: {regular_result.planning_time:.3f}s")
+            print(f"   Success: {regular_result.plan.num_waypoints} waypoints")
+            print(f"   Planning time: {regular_result.planning_time:.3f}s")
         else:
-            print(f"   ❌ Failed: {regular_result.error_message}")
+            print(f"   FAILED: {regular_result.error_message}")
         
         scenario_results['regular'] = regular_result
         results[scenario_name] = scenario_results
     
     # Performance Summary
-    print("\n📊 PERFORMANCE SUMMARY")
+    print("\nPERFORMANCE SUMMARY")
     print("=" * 60)
     
     for scenario_name, scenario_results in results.items():
@@ -149,51 +149,51 @@ def run_aorrtc_demo():
         regular = scenario_results.get('regular')
         
         if aorrtc and aorrtc.success:
-            print(f"  AORRTC Path:     ✅ {len(aorrtc.path)} waypoints")
+            print(f"  AORRTC Path: {len(aorrtc.path)} waypoints")
         
         if enhanced and enhanced.status.value == 'success':
-            print(f"  Enhanced Motion: ✅ {enhanced.planning_time:.3f}s planning")
+            print(f"  Enhanced Motion: {enhanced.planning_time:.3f}s planning")
             
         if regular and regular.status.value == 'success':
-            print(f"  Regular RRT:     ✅ {regular.planning_time:.3f}s planning")
+            print(f"  Regular RRT: {regular.planning_time:.3f}s planning")
             
         # Compare planning times
         if enhanced and regular and both_success(enhanced, regular):
             speedup = regular.planning_time / enhanced.planning_time
             if speedup > 1:
-                print(f"  📈 AORRTC is {speedup:.1f}x slower (higher quality)")
+                print(f"  AORRTC is {speedup:.1f}x slower (higher quality)")
             else:
-                print(f"  📈 AORRTC is {1/speedup:.1f}x faster")
+                print(f"  AORRTC is {1/speedup:.1f}x faster")
     
     # System capabilities summary
-    print("\n🎉 SYSTEM CAPABILITIES DEMONSTRATED")
+    print("\nSYSTEM CAPABILITIES DEMONSTRATED")
     print("=" * 60)
-    print("✅ AORRTC Algorithm: Asymptotically optimal path planning")
-    print("✅ Bidirectional Search: Efficient tree exploration")
-    print("✅ Informed Sampling: Focused search in promising regions")
-    print("✅ Advanced Smoothing: Gradient-based trajectory optimization")
-    print("✅ Constraint Validation: Safety and feasibility checking")
-    print("✅ Fallback Mechanisms: Robust planning with RRT backup")
-    print("✅ Performance Optimization: KDTree nearest neighbor search")
-    print("✅ Motion Coordination: High-level planning interface")
+    print("AORRTC Algorithm: Asymptotically optimal path planning")
+    print("Bidirectional Search: Efficient tree exploration")
+    print("Informed Sampling: Focused search in promising regions")
+    print("Advanced Smoothing: Gradient-based trajectory optimization")
+    print("Constraint Validation: Safety and feasibility checking")
+    print("Fallback Mechanisms: Robust planning with RRT backup")
+    print("Performance Optimization: KDTree nearest neighbor search")
+    print("Motion Coordination: High-level planning interface")
     
     # Demonstrate gripper integration with ZERO code changes
-    print(f"\n🤖 GRIPPER INTEGRATION TEST")
+    print(f"\nGRIPPER INTEGRATION TEST")
     print("=" * 60)
     print("Demonstrating that the SAME AORRTC code works with gripper...")
     
     # Attach gripper tool
-    print("\n📎 Attaching gripper tool...")
+    print("\nAttaching gripper tool...")
     gripper_success = fk.attach_tool("default_gripper")
     
     if gripper_success:
-        print(f"✅ Gripper attached: {fk.is_tool_attached()}")
+        print(f"Gripper attached: {fk.is_tool_attached()}")
         tool_info = fk.get_tool_info()
         print(f"   Tool: {tool_info['name']}")
         print(f"   Offset: {tool_info['offset_translation']} m")
         
         # Run EXACT SAME planning code - now with gripper consideration
-        print(f"\n🎯 Re-running Simple Motion with Gripper (SAME CODE)")
+        print(f"\nRe-running Simple Motion with Gripper (SAME CODE)")
         print("-" * 50)
         
         simple_config = scenarios["Simple Motion"]
@@ -201,7 +201,7 @@ def run_aorrtc_demo():
         q_goal = simple_config["goal"]
         
         # Same AORRTC planning call - automatically gripper-aware!
-        print("📍 AORRTC Path Planning with Gripper...")
+        print("AORRTC Path Planning with Gripper...")
         start_time = time.time()
         gripper_result = aorrtc_planner.plan_aorrtc_path(
             q_start, q_goal, max_iterations=simple_config["max_iter"]
@@ -209,8 +209,8 @@ def run_aorrtc_demo():
         gripper_time = time.time() - start_time
         
         if gripper_result.success:
-            print(f"   ✅ Success: {len(gripper_result.path)} waypoints")
-            print(f"   ⏱️  Time: {gripper_time*1000:.1f}ms")
+            print(f"   Success: {len(gripper_result.path)} waypoints")
+            print(f"   Time: {gripper_time*1000:.1f}ms")
             
             # Compare positions: TCP vs Gripper
             T_start_tcp = fk.compute_tcp_kinematics(q_start)
@@ -223,41 +223,41 @@ def run_aorrtc_demo():
             tcp_goal = T_goal_tcp[:3, 3]
             gripper_goal = T_goal_gripper[:3, 3]
             
-            print(f"   🎯 Start - TCP: [{tcp_start[0]:.3f}, {tcp_start[1]:.3f}, {tcp_start[2]:.3f}] m")
-            print(f"   🤖 Start - Gripper: [{gripper_start[0]:.3f}, {gripper_start[1]:.3f}, {gripper_start[2]:.3f}] m")
-            print(f"   🎯 Goal - TCP: [{tcp_goal[0]:.3f}, {tcp_goal[1]:.3f}, {tcp_goal[2]:.3f}] m")
-            print(f"   🤖 Goal - Gripper: [{gripper_goal[0]:.3f}, {gripper_goal[1]:.3f}, {gripper_goal[2]:.3f}] m")
+            print(f"   Start - TCP: [{tcp_start[0]:.3f}, {tcp_start[1]:.3f}, {tcp_start[2]:.3f}] m")
+            print(f"   Start - Gripper: [{gripper_start[0]:.3f}, {gripper_start[1]:.3f}, {gripper_start[2]:.3f}] m")
+            print(f"   Goal - TCP: [{tcp_goal[0]:.3f}, {tcp_goal[1]:.3f}, {tcp_goal[2]:.3f}] m")
+            print(f"   Goal - Gripper: [{gripper_goal[0]:.3f}, {gripper_goal[1]:.3f}, {gripper_goal[2]:.3f}] m")
             
             # Verify tool offset
             start_offset = np.linalg.norm(gripper_start - tcp_start)
             goal_offset = np.linalg.norm(gripper_goal - tcp_goal)
-            print(f"   📏 Tool offset: {start_offset:.4f}m - {goal_offset:.4f}m (expected: 0.085m)")
+            print(f"   Tool offset: {start_offset:.4f}m - {goal_offset:.4f}m (expected: 0.085m)")
             
             # Compare with TCP-only result
             if 'Simple Motion' in results and results['Simple Motion']['aorrtc'].success:
                 tcp_result = results['Simple Motion']['aorrtc']
-                print(f"\n🔄 Comparison with TCP-only mode:")
+                print(f"\nComparison with TCP-only mode:")
                 print(f"   TCP-only waypoints: {len(tcp_result.path)}")
                 print(f"   Gripper waypoints: {len(gripper_result.path)}")
                 print(f"   Performance impact: Minimal (same algorithm)")
         else:
-            print(f"   ❌ Failed: {gripper_result.error_message}")
+            print(f"   FAILED: {gripper_result.error_message}")
         
         # Detach gripper
-        print(f"\n📎 Detaching gripper...")
+        print(f"\nDetaching gripper...")
         fk.detach_tool()
-        print(f"✅ Back to TCP-only mode: {not fk.is_tool_attached()}")
+        print(f"Back to TCP-only mode: {not fk.is_tool_attached()}")
         
-        print(f"\n💡 KEY INSIGHT: No code changes needed!")
+        print(f"\nKEY INSIGHT: No code changes needed!")
         print(f"   The SAME AORRTC planning code automatically:")
-        print(f"   ✅ Considers gripper geometry when attached")
-        print(f"   ✅ Uses TCP geometry when detached") 
-        print(f"   ✅ Maintains perfect tool offset (85mm)")
-        print(f"   ✅ Preserves all planning performance")
+        print(f"   Considers gripper geometry when attached")
+        print(f"   Uses TCP geometry when detached") 
+        print(f"   Maintains perfect tool offset (85mm)")
+        print(f"   Preserves all planning performance")
     else:
-        print("❌ Failed to attach gripper tool")
+        print("FAILED to attach gripper tool")
     
-    print(f"\n🚀 AORRTC Enhanced Motion Planning System Demo Complete!")
+    print(f"\nAORRTC Enhanced Motion Planning System Demo Complete!")
     return results
 
 def both_success(enhanced_result, regular_result):
@@ -277,7 +277,7 @@ def visualize_results(results):
 if __name__ == "__main__":
     try:
         results = run_aorrtc_demo()
-        print("\nDemo completed successfully! 🎉")
+        print("\nDemo completed successfully!")
     except Exception as e:
         print(f"\nDemo failed with error: {e}")
         import traceback

@@ -14,7 +14,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def analyze_urdf_reach():
     """Calculate theoretical maximum reach from URDF."""
-    print("🔍 URDF ANALYSIS - Theoretical Maximum Reach")
+    print("URDF ANALYSIS - Theoretical Maximum Reach")
     print("="*50)
     
     # From URDF joint origins
@@ -38,7 +38,7 @@ def analyze_urdf_reach():
 
 def analyze_json_data():
     """Analyze real robot data from JSON."""
-    print("\n📊 JSON DATA ANALYSIS - Real Robot Performance")
+    print("\nJSON DATA ANALYSIS - Real Robot Performance")
     print("="*50)
     
     # From the JSON data provided
@@ -55,7 +55,7 @@ def analyze_json_data():
 
 def test_current_workspace_limits():
     """Test current workspace constraints."""
-    print("\n⚙️  CURRENT WORKSPACE CONSTRAINTS")
+    print("\nCURRENT WORKSPACE CONSTRAINTS")
     print("="*50)
     
     try:
@@ -87,7 +87,7 @@ def test_current_workspace_limits():
             pos_mm = [distance_mm, 0.0, z_height]
             rot_deg = [180.0, 0.0, 0.0]
             
-            print(f"\n🎯 Testing {distance_mm}mm reach ({description})")
+            print(f"\nTesting {distance_mm}mm reach ({description})")
             print(f"   Position: {pos_mm}mm")
             
             try:
@@ -100,39 +100,41 @@ def test_current_workspace_limits():
                 }
                 
                 if success:
-                    print(f"   ✅ SUCCESS: {len(plan.waypoints)} waypoints")
+                    print(f"   SUCCESS: {len(plan.waypoints)} waypoints")
                 else:
-                    print(f"   ❌ FAILED: {plan.error_message}")
+                    print(f"   FAILED: {plan.error_message}")
                     
             except Exception as e:
-                print(f"   ❌ EXCEPTION: {e}")
+                print(f"   EXCEPTION: {e}")
                 results[distance_mm] = {'success': False, 'error': str(e), 'waypoints': 0}
         
         return results
         
     except Exception as e:
-        print(f"❌ Error testing workspace limits: {e}")
+        print(f"Error testing workspace limits: {e}")
         return {}
 
 def analyze_limiting_factors():
     """Analyze what's limiting the reach to 500mm."""
-    print("\n🔍 LIMITING FACTORS ANALYSIS")
+    print("\nLIMITING FACTORS ANALYSIS")
     print("="*50)
     
     # Check workspace sampling limits
     try:
-        sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'planning', 'src'))
-        from configuration_space_analyzer import ConfigurationSpaceAnalyzer
+        PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        if PROJECT_ROOT not in sys.path:
+            sys.path.insert(0, PROJECT_ROOT)
+        from planning.src.configuration_space_analyzer import ConfigurationSpaceAnalyzer
         
         print("1. Configuration Space Analyzer:")
         print(f"   Current workspace sampling bounds:")
         print(f"   x_range: (-0.7, 0.7) = ±700mm")
         print(f"   y_range: (-0.7, 0.7) = ±700mm") 
         print(f"   z_range: (0.1, 1.0) = 100-1000mm")
-        print(f"   ✅ Workspace bounds support 700mm reach")
+        print(f"   Workspace bounds support 700mm reach")
         
     except Exception as e:
-        print(f"   ❌ Could not analyze configuration space: {e}")
+        print(f"   Could not analyze configuration space: {e}")
     
     # Check constraint file
     print("\n2. Constraint Configuration:")
@@ -141,9 +143,9 @@ def analyze_limiting_factors():
         print(f"   Workspace limits in constraints.yaml:")
         print(f"   x_max: 0.72m = 720mm")
         print(f"   y_max: 0.72m = 720mm")
-        print(f"   ✅ Constraints support 720mm reach")
+        print(f"   Constraints support 720mm reach")
     else:
-        print(f"   ❌ Constraints file not found")
+        print(f"   Constraints file not found")
     
     print("\n3. Potential Limiting Factors:")
     print("   • IK solver convergence at extended reach")
@@ -154,28 +156,28 @@ def analyze_limiting_factors():
 
 def propose_solutions():
     """Propose solutions to extend reach to 650-700mm."""
-    print("\n💡 PROPOSED SOLUTIONS TO EXTEND REACH")
+    print("\nPROPOSED SOLUTIONS TO EXTEND REACH")
     print("="*50)
     
-    print("1. 🎯 IMMEDIATE ACTIONS (should increase reach to ~650mm):")
+    print("1. IMMEDIATE ACTIONS (should increase reach to ~650mm):")
     print("   • Clear cached reachability maps to force rebuild")
     print("   • Increase workspace sampling bounds to ±0.75m (750mm)")
     print("   • Relax collision detection for extended reach positions")
     print("   • Optimize IK solver parameters for better convergence")
     
-    print("\n2. 🔧 CONFIGURATION UPDATES:")
+    print("\n2. CONFIGURATION UPDATES:")
     print("   • Update constraints.yaml workspace bounds to 0.75m")
     print("   • Enable extended_reach_mode in collision detection")
     print("   • Increase max_reach in self_collision to 0.700m")
     print("   • Rebuild reachability map with more samples")
     
-    print("\n3. 🚀 ADVANCED OPTIMIZATIONS (target ~700mm reach):")
+    print("\n3. ADVANCED OPTIMIZATIONS (target ~700mm reach):")
     print("   • Implement adaptive collision thresholds by distance")
     print("   • Add specialized IK strategies for extended reach") 
     print("   • Optimize joint limit utilization")
     print("   • Fine-tune safety margins for different reach zones")
     
-    print("\n4. 📋 VALIDATION STRATEGY:")
+    print("\n4. VALIDATION STRATEGY:")
     print("   • Test incremental reach increases (550mm → 600mm → 650mm → 700mm)")
     print("   • Validate FK-IK consistency at extended reach")
     print("   • Ensure safety margins remain adequate")
@@ -183,7 +185,7 @@ def propose_solutions():
 
 def main():
     """Run extended reach analysis."""
-    print("🤖 RB3-730ES-U EXTENDED REACH ANALYSIS")
+    print("RB3-730ES-U EXTENDED REACH ANALYSIS")
     print("Investigating reach limitations and proposing solutions")
     print("=" * 80)
     
@@ -203,20 +205,20 @@ def main():
     propose_solutions()
     
     # 6. Summary
-    print(f"\n🎯 ANALYSIS SUMMARY")
+    print(f"\nANALYSIS SUMMARY")
     print("="*60)
-    print(f"✅ URDF Theoretical Reach: {theoretical_reach*1000:.0f}mm horizontal")
-    print(f"✅ Real Robot Verified: {json_data[2]:.0f}mm vertical at zero config")
-    print(f"⚠️  Current Practical Limit: ~500mm (needs improvement)")
-    print(f"🎯 Target Extended Reach: 650-700mm (feasible)")
+    print(f"URDF Theoretical Reach: {theoretical_reach*1000:.0f}mm horizontal")
+    print(f"Real Robot Verified: {json_data[2]:.0f}mm vertical at zero config")
+    print(f"WARNING: Current Practical Limit: ~500mm (needs improvement)")
+    print(f"Target Extended Reach: 650-700mm (feasible)")
     
     if current_results:
         successful_distances = [d for d, r in current_results.items() if r['success']]
         if successful_distances:
             max_success = max(successful_distances)
-            print(f"📊 Current Test Results: Up to {max_success}mm successful")
+            print(f"Current Test Results: Up to {max_success}mm successful")
     
-    print(f"\n📋 NEXT STEPS:")
+    print(f"\nNEXT STEPS:")
     print("1. Implement proposed configuration changes")
     print("2. Clear reachability map cache and rebuild")
     print("3. Test incremental reach improvements")

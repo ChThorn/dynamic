@@ -2,8 +2,9 @@
 """
 Integrated Pose Selection and Motion Planning Example
 
-This example demonstrates the seamless integration between the visualizer_tool_TCP
-and planning_dynamic_executor using the new pose_integration_bridge.
+This example demonstrates the seamless integration between the
+visualizer_tool_TCP and the planning_dynamic_executor using the
+pose_integration_bridge.
 
 Features:
 - One-line workflow from pose selection to motion execution
@@ -22,16 +23,17 @@ import sys
 import os
 import numpy as np
 
-# Add the src folder to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'kinematics', 'src'))
+# Add project root to path for package-style imports
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 # Import FK validation (optional)
 try:
-    from forward_kinematic import ForwardKinematics
+    from kinematics.src.forward_kinematic import ForwardKinematics
     FK_AVAILABLE = True
 except ImportError:
-    print("⚠️  Forward kinematics module not available - FK validation will be skipped")
+    print("WARNING: Forward kinematics module not available - FK validation will be skipped")
     ForwardKinematics = None
     FK_AVAILABLE = False
 
@@ -47,10 +49,10 @@ def validate_waypoints_with_fk(waypoints, error_threshold_mm=1.0):
         tuple: (is_valid, max_error_mm, error_details)
     """
     if not FK_AVAILABLE:
-        print("⚠️  FK validation skipped - module not available")
+        print("WARNING: FK validation skipped - module not available")
         return True, 0.0, []
     
-    print("🔍 STEP: FK Validation Before Execution")
+    print("STEP: FK Validation Before Execution")
     print("Validating waypoint accuracy...")
     
     fk_validator = ForwardKinematics()
@@ -78,21 +80,21 @@ def validate_waypoints_with_fk(waypoints, error_threshold_mm=1.0):
     
     # Report validation results
     if validation_errors:
-        print(f"❌ FK Validation FAILED!")
+        print(f"FK Validation FAILED!")
         print(f"Found {len(validation_errors)} waypoints with errors > {error_threshold_mm}mm:")
         for error in validation_errors:
             print(f"  Waypoint #{error['waypoint']}: {error['error_mm']:.3f}mm error")
         print(f"Maximum error: {max_error:.3f}mm")
         return False, max_error, validation_errors
     else:
-        print(f"✅ FK Validation PASSED!")
+        print(f"FK Validation PASSED!")
         print(f"All {len(waypoints)} waypoints validated successfully")
         print(f"Maximum error: {max_error:.3f}mm (EXCELLENT)")
         return True, max_error, []
 
 def main():
     """Run the integrated pose selection and motion planning example."""
-    print("🤖 INTEGRATED POSE SELECTION & MOTION PLANNING")
+    print("INTEGRATED POSE SELECTION & MOTION PLANNING")
     print("="*60)
     print("This example demonstrates seamless integration between:")
     print("• Interactive 3D pose visualizer (visualizer_tool_TCP)")
@@ -101,19 +103,19 @@ def main():
     print()
     
     try:
-        from pose_integration_bridge import create_integrated_workflow
+        from robot_driver_interface.src.pose_integration_bridge import create_integrated_workflow
         
         # Create the integrated workflow
-        print("⚙️  STEP 1: Initialize Integrated Workflow")
+        print("STEP 1: Initialize Integrated Workflow")
         bridge = create_integrated_workflow(
             robot_ip="192.168.0.10",
             operation_mode="simulation"  # Safe default
         )
-        print("✅ Integration bridge created successfully")
+        print("Integration bridge created successfully")
         print()
         
         # Option 1: Complete workflow (visualizer → planning → execution)
-        print("🎯 OPTION 1: Complete Workflow")
+        print("OPTION 1: Complete Workflow")
         print("This will:")
         print("1. Open interactive pose visualizer")
         print("2. Convert selected poses to planning format")
@@ -123,7 +125,7 @@ def main():
         run_complete = input("Run complete workflow? (y/n): ").lower().strip()
         
         if run_complete == 'y':
-            print("\n🚀 Running complete workflow...")
+            print("\nRunning complete workflow...")
             print("Instructions for visualizer:")
             print("• Click on 2D plots to set position")
             print("• Use sliders to adjust orientation") 
@@ -132,14 +134,14 @@ def main():
             print()
             
             # Note: FK validation will be added inside the bridge workflow
-            print("🛡️ SAFETY NOTE: Enhanced with FK validation before execution")
+            print("SAFETY NOTE: Enhanced with FK validation before execution")
             print()
             
             # Run the integrated workflow (FK validation happens inside)
             targets, results = bridge.run_complete_workflow(execution_mode="blend")
             
             # Display comprehensive results
-            print("\n📊 WORKFLOW RESULTS")
+            print("\nWORKFLOW RESULTS")
             print("="*40)
             
             if targets:
@@ -153,28 +155,28 @@ def main():
                 print("Detailed Results:")
                 print("-" * 40)
                 for i, (target, success) in enumerate(zip(targets, results)):
-                    status = "✅ SUCCESS" if success else "❌ FAILED"
+                    status = "SUCCESS" if success else "FAILED"
                     summary = bridge.get_pose_summary(target)
                     print(f"Pose {i+1}: {status}")
                     print(f"  {summary}")
                 print()
                 
                 if success_count == len(results):
-                    print("🎉 All motions completed successfully!")
+                    print("All motions completed successfully!")
                     print("Robot is ready for real-world deployment.")
                 elif success_count > 0:
-                    print(f"⚠️  {len(results)-success_count} motions failed")
+                    print(f"WARNING: {len(results)-success_count} motions failed")
                     print("Check robot workspace constraints and pose reachability.")
                 else:
-                    print("❌ All motions failed")
+                    print("All motions failed")
                     print("Review poses and robot configuration.")
             else:
-                print("❌ No poses were selected")
+                print("No poses were selected")
                 print("Workflow cancelled by user.")
         
         else:
             # Option 2: Demonstration of individual components
-            print("\n🔧 OPTION 2: Component Demonstration")
+            print("\nOPTION 2: Component Demonstration")
             
             # Demo 1: Format conversion
             print("\n1. Format Conversion Demo")
@@ -193,14 +195,14 @@ def main():
             
             print(f"\nPlanning target:")
             print(f"  {bridge.get_pose_summary(target)}")
-            print("✅ Conversion successful")
+            print("Conversion successful")
             
             # Demo 2: Executor creation
             print("\n2. Executor Creation Demo")
             print("-" * 30)
             
             executor = bridge.create_executor(execution_mode="blend", chunk_size=8)
-            print("✅ Planning dynamic executor created")
+            print("Planning dynamic executor created")
             print(f"Operation mode: {executor.get_operation_mode()}")
             print(f"Safe mode: {executor.is_safe_mode()}")
             
@@ -212,10 +214,10 @@ def main():
             success = executor.plan_and_execute_motion(target)
             
             if success:
-                print("✅ Motion planning successful!")
+                print("Motion planning successful!")
                 print("Waypoints generated and validated.")
             else:
-                print("❌ Motion planning failed")
+                print("Motion planning failed")
                 print("Check pose reachability and robot state.")
         
         print("\n" + "="*60)
@@ -229,28 +231,28 @@ def main():
         print("• Automatic error detection and user warnings")
         print("• Production-ready for robot controller deployment")
         print()
-        print("🛡️ SAFETY FEATURES:")
+        print("SAFETY FEATURES:")
         print("• FK validation prevents kinematic errors")
         print("• User confirmation required for failed validation")
         print("• Clear error reporting with specific waypoint details")
         print("• Execution blocking for critical safety issues")
         
     except ImportError as e:
-        print(f"❌ Import error: {e}")
-        print("💡 Make sure all required modules are available:")
+        print(f"Import error: {e}")
+        print("NOTE: Make sure all required modules are available:")
         print("   - pose_integration_bridge.py")
         print("   - planning_dynamic_executor.py") 
         print("   - visualizer_tool_TCP.py")
     except KeyboardInterrupt:
-        print("\n👋 Example cancelled by user")
+        print("\nExample cancelled by user")
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
+        print(f"Unexpected error: {e}")
         import traceback
         traceback.print_exc()
     finally:
         try:
             bridge.shutdown()
-            print("🔧 Integration bridge shut down cleanly")
+            print("Integration bridge shut down cleanly")
         except:
             pass
 

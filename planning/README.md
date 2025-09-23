@@ -1,6 +1,6 @@
 # Clean Motion Planning System
 
-## 📁 Structure
+## Project Structure
 
 ### `src/` - Core Production Modules
 - `motion_planner.py` - **Main interface** - Clean motion planner with C-space integration
@@ -16,7 +16,7 @@
 - `main.py` - **General examples** - Basic usage patterns
 - `pick_and_place_example.py` - **Use case demo** - Pick and place operations
 
-## 🚀 Quick Start
+## Quick Start
 
 ```python
 # Production usage
@@ -29,14 +29,14 @@ planner = MotionPlanner(fk, ik)
 planner.enable_configuration_space_analysis()
 ```
 
-## 🎯 Key Features
+## Key Features
 
-- ✅ **Clean & Minimal** - Essential code only, no research complexity
-- ✅ **Robust** - Automatic fallbacks and error handling
-- ✅ **Fast** - C-space optimization for better IK performance
-- ✅ **Production Ready** - Real-world units and robot API compatibility
+- Clean & Minimal - Essential code only, no research complexity
+- Robust - Automatic fallbacks and error handling
+- Fast - C-space optimization for better IK performance
+- Production Ready - Real-world units and robot API compatibility
 
-## 📊 Performance
+## Performance
 
 - **IK Success Rate**: 100%
 - **Motion Planning Success**: 100% 

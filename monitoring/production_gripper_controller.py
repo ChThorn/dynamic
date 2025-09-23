@@ -22,16 +22,17 @@ from typing import List, Tuple, Optional, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
 
-# Add module paths
-sys.path.append('../kinematics/src')
-sys.path.append('../planning/src')
+# Configure project-root imports
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
-from forward_kinematic import ForwardKinematics
-from inverse_kinematic import InverseKinematics
+from kinematics.src.forward_kinematic import ForwardKinematics
+from kinematics.src.inverse_kinematic import InverseKinematics
 
 try:
-    from motion_planner import MotionPlanner, PlanningStrategy, PlanningStatus
-    from trajectory_planner import TrajectoryPlanner
+    from planning.src.motion_planner import MotionPlanner, PlanningStrategy, PlanningStatus
+    from planning.src.trajectory_planner import TrajectoryPlanner
     PLANNING_AVAILABLE = True
 except ImportError:
     PLANNING_AVAILABLE = False
@@ -487,7 +488,7 @@ if __name__ == "__main__":
     )
     
     # Display results
-    print("\n🏭 PRODUCTION CONTROLLER TEST RESULTS")
+    print("\nPRODUCTION CONTROLLER TEST RESULTS")
     print("=" * 50)
     print(f"Task Status: {result.status.value.upper()}")
     print(f"Completed Waypoints: {result.completed_waypoints}/{result.total_waypoints}")
@@ -501,6 +502,6 @@ if __name__ == "__main__":
     
     # Show performance statistics
     stats = controller.get_performance_stats()
-    print("\n📊 PERFORMANCE STATISTICS:")
+    print("\nPERFORMANCE STATISTICS:")
     for key, value in stats.items():
         print(f"   {key.replace('_', ' ').title()}: {value}")

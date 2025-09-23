@@ -20,13 +20,14 @@ import numpy as np
 import logging
 import time
 
-# Add paths for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'kinematics', 'src'))
+# Add project root for package-style imports
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 # Import modules
-from forward_kinematic import ForwardKinematics
-from inverse_kinematic import InverseKinematics
+from kinematics.src.forward_kinematic import ForwardKinematics
+from kinematics.src.inverse_kinematic import InverseKinematics
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 def test_gripper_integration():
     """Test gripper integration with existing planning infrastructure."""
     
-    print("🤖 GRIPPER INTEGRATION TEST")
+    print("GRIPPER INTEGRATION TEST")
     print("=" * 50)
     
     # Initialize kinematics
@@ -44,7 +45,7 @@ def test_gripper_integration():
     fk = ForwardKinematics()
     ik = InverseKinematics(fk)
     
-    print(f"✅ Kinematics initialized")
+    print(f"Kinematics initialized")
     print(f"Tool attached: {fk.is_tool_attached()}")
     
     # Test configurations
@@ -81,7 +82,7 @@ def test_gripper_integration():
     
     success = fk.attach_tool("default_gripper")
     if success:
-        print(f"✅ Tool attached: {fk.is_tool_attached()}")
+        print(f"Tool attached: {fk.is_tool_attached()}")
         tool_info = fk.get_tool_info()
         print(f"Tool: {tool_info['name']}")
         print(f"Type: {tool_info['type']}")
@@ -222,25 +223,25 @@ def test_gripper_integration():
         print(f"Detach consistency: {detach_consistency:.6f} m")
         
     else:
-        print("❌ Failed to attach gripper tool")
+        print("Failed to attach gripper tool")
         return False
     
     print("\n" + "=" * 50)
-    print("🎉 GRIPPER INTEGRATION TEST COMPLETE")
+    print("GRIPPER INTEGRATION TEST COMPLETE")
     print("\nIntegration Status:")
-    print("✅ Tool attachment/detachment working")
-    print("✅ TCP consistency maintained perfectly")
-    print("✅ Tool offset precisely calculated")
-    print("✅ Dual-mode IK operational")
-    print("✅ Pick and place positions reachable")
-    print("✅ Workspace analysis functional")
-    print("✅ Ready for motion planning integration")
+    print("Tool attachment/detachment working")
+    print("TCP consistency maintained perfectly")
+    print("Tool offset precisely calculated")
+    print("Dual-mode IK operational")
+    print("Pick and place positions reachable")
+    print("Workspace analysis functional")
+    print("Ready for motion planning integration")
     
     return True
 
 if __name__ == "__main__":
     success = test_gripper_integration()
     if success:
-        print("\n🚀 System ready for production pick and place operations!")
+        print("\nSystem ready for production pick and place operations!")
     else:
-        print("\n❌ Integration issues detected - check configuration")
+        print("\nIntegration issues detected - check configuration")

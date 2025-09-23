@@ -321,8 +321,8 @@ class RobotConnectionValidator:
                 if hasattr(robot.sys_status, 'robot_state'):
                     status_fields["robot_state"] = robot.sys_status.robot_state
                 
-                if hasattr(robot.sys_status, 'joint_positions_deg'):
-                    status_fields["joint_positions"] = robot.sys_status.joint_positions_deg
+                if hasattr(robot.sys_status, 'jnt_ang'):
+                    status_fields["joint_positions"] = robot.sys_status.jnt_ang
                 
                 return {
                     "status": "SUCCESS",
@@ -542,20 +542,20 @@ def main():
     """Run staged robot validation"""
     validator = RobotConnectionValidator()
     
-    print("🚀 Starting Robot Connection Validation...")
-    print("⚠️  Make sure robot is connected via Ethernet!")
+    print("Starting Robot Connection Validation...")
+    print("WARNING: Make sure robot is connected via Ethernet!")
     
     # Stage 1: Network validation (no robot needed)
     stage1_results = validator.stage1_network_validation()
     print(f"Stage 1 Complete: {stage1_results}")
     
     # For stages 2-4, we'd need actual robot instance
-    print("\n🤖 Connect robot controller for stages 2-4...")
+    print("\nConnect robot controller for stages 2-4...")
     print("Use: validator.stage2_robot_api_validation(robot_instance)")
     
     # Generate report
     report_file = validator.save_report()
-    print(f"\n📊 Report saved: {report_file}")
+    print(f"\nReport saved: {report_file}")
 
 
 if __name__ == "__main__":

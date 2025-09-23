@@ -315,7 +315,7 @@ def create_integrated_workflow(robot_ip: str = "192.168.0.10",
 # Example usage demonstration
 def demo_integration():
     """Demonstrate the integration bridge functionality."""
-    print("🤖 POSE INTEGRATION BRIDGE DEMO")
+    print("POSE INTEGRATION BRIDGE DEMO")
     print("="*50)
     
     # Create integration bridge
@@ -329,18 +329,18 @@ def demo_integration():
         targets, results = bridge.run_complete_workflow(execution_mode="blend")
         
         # Display results
-        print(f"\n📊 WORKFLOW RESULTS:")
+        print(f"\nWORKFLOW RESULTS:")
         print(f"Poses selected: {len(targets)}")
         print(f"Motions successful: {sum(results)}")
         
         for i, (target, success) in enumerate(zip(targets, results)):
-            status = "✅" if success else "❌"
+            status = "SUCCESS" if success else "FAILED"
             print(f"  {status} Pose {i+1}: {bridge.get_pose_summary(target)}")
     
     except KeyboardInterrupt:
-        print("\n👋 Demo cancelled by user")
+        print("\nDemo cancelled by user")
     except Exception as e:
-        print(f"❌ Demo error: {e}")
+        print(f"Demo error: {e}")
     finally:
         bridge.shutdown()
 

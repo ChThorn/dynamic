@@ -124,12 +124,18 @@ class PlanningDynamicExecutor:
         self.execution_complete = False
         self.execution_thread = None
         self.stop_requested = False
+        self.execution_start_time = None  # Track execution start time for progress feedback
         
         # Pre-buffering execution parameters (optimized for continuous motion)
         self.chunk_size = chunk_size  # Configurable waypoints per chunk (default: 8)
         self.max_buffer_size = 20  # Maximum waypoints in robot buffer at once
         self.prefill_ratio = 0.75  # Fill 75% of buffer before starting motion
         self.buffer_low_threshold = 0.4  # Stream new chunks when buffer < 40% full
+        
+        # Buffer tracking for internal management since robot doesn't have get_buffer_size()
+        self.points_in_buffer = 0  # Track estimated points in robot buffer
+        self.last_chunk_time = time.time()  # Track when last chunk was sent
+        self.initial_buffer_points = 0  # Track initial buffer size for consumption calculation
         
         # Performance tracking
         self.stats = {
@@ -212,7 +218,7 @@ class PlanningDynamicExecutor:
         """
         # Safety check: Warn if in real mode
         if self.operation_mode == "real":
-            self.logger.warning("⚠️  EXECUTING REAL ROBOT MOTION ⚠️")
+            self.logger.warning("EXECUTING REAL ROBOT MOTION")
         else:
             self.logger.info("Executing motion in SIMULATION mode (safe)")
             
@@ -288,7 +294,7 @@ class PlanningDynamicExecutor:
         """
         # Safety check: Warn if in real mode
         if self.operation_mode == "real":
-            self.logger.warning("⚠️  EXECUTING REAL PICK AND PLACE SEQUENCE ⚠️")
+            self.logger.warning("EXECUTING REAL PICK AND PLACE SEQUENCE")
         else:
             self.logger.info("Executing pick and place in SIMULATION mode (safe)")
             
@@ -346,12 +352,28 @@ class PlanningDynamicExecutor:
             self.logger.error(f"Pick and place failed: {e}")
             return False
     
+    def _calculate_motion_time(self, planning_waypoints) -> float:
+        """Calculate appropriate execution time based on path length"""
+        total_angular_distance = 0
+        
+        for i in range(1, len(planning_waypoints)):
+            joint_diff = np.array(planning_waypoints[i].joint_positions_deg) - \
+                         np.array(planning_waypoints[i-1].joint_positions_deg)
+            total_angular_distance += np.linalg.norm(joint_diff)
+        
+        # Assume comfortable speed of 30-60 deg/s
+        comfortable_speed = 45  # deg/s
+        base_time = total_angular_distance / comfortable_speed
+        
+        # Add time for acceleration/deceleration phases
+        return base_time * 1.3  # 30% overhead for smooth accel/decel
+
     def _convert_to_execution_waypoints(self, planning_waypoints, 
                                       total_time: float = None) -> List[ExecutionWaypoint]:
         """Convert planning waypoints to execution waypoints with polynomial trajectory timing"""
         if total_time is None:
-            # Auto-calculate execution time based on waypoint count
-            total_time = len(planning_waypoints) * 0.5  # 0.5s per waypoint
+            # Auto-calculate execution time based on path distance
+            total_time = self._calculate_motion_time(planning_waypoints)
         
         execution_waypoints = []
         
@@ -676,7 +698,8 @@ class PlanningDynamicExecutor:
                 if self.stop_requested:
                     return False
                 
-                # Add chunk to robot buffer
+                # Add chunk to robot buffer with accurate tracking
+                points_added_in_chunk = 0
                 for wp in chunk:
                     if hasattr(self.robot, 'move_joint_blend_add_point'):
                         success = self.robot.move_joint_blend_add_point(
@@ -684,19 +707,29 @@ class PlanningDynamicExecutor:
                             speed=wp.speed, 
                             acceleration=wp.acceleration
                         )
-                        if not success:
+                        if success:
+                            points_added_in_chunk += 1
+                        else:
                             self.logger.error(f"Failed to pre-fill waypoint in buffer")
                             return False
-                        prefilled_waypoints += 1
                 
+                prefilled_waypoints += points_added_in_chunk
                 chunks_prefilled += 1
-                self.logger.info(f"Pre-filled chunk {i+1}: {prefilled_waypoints} waypoints in buffer")
+                
+                if points_added_in_chunk < len(chunk):
+                    self.logger.warning(f"Pre-fill chunk {i+1}: only added {points_added_in_chunk}/{len(chunk)} points")
+                else:
+                    self.logger.info(f"Pre-filled chunk {i+1}: {points_added_in_chunk} waypoints added successfully")
                 
                 # Check if we've reached optimal pre-fill level
                 if prefilled_waypoints >= prefill_target:
                     break
             
-            self.logger.info(f"✅ Buffer pre-filled: {prefilled_waypoints} waypoints, {chunks_prefilled} chunks")
+            # Update buffer tracking
+            self.points_in_buffer = prefilled_waypoints
+            self.last_chunk_time = time.time()
+            
+            self.logger.info(f"Buffer pre-filled: {prefilled_waypoints} waypoints, {chunks_prefilled} chunks")
             return True
             
         except Exception as e:
@@ -704,7 +737,7 @@ class PlanningDynamicExecutor:
             return False
     
     def _start_motion_and_stream(self, waypoint_chunks: List[List[ExecutionWaypoint]]) -> bool:
-        """Start robot motion and stream remaining chunks continuously"""
+        """Enhanced with progress feedback"""
         try:
             self.logger.info("Phase 2: Starting motion with continuous chunk streaming")
             
@@ -714,7 +747,15 @@ class PlanningDynamicExecutor:
                     self.logger.error("Failed to start blend motion")
                     return False
             
-            self.logger.info("🚀 Robot motion started with pre-filled buffer")
+            self.logger.info("Robot motion started with pre-filled buffer")
+            
+            # Initialize progress tracking
+            total_points = sum(len(chunk) for chunk in waypoint_chunks)
+            executed_points = 0
+            self.execution_start_time = time.time()
+            
+            # Initialize buffer tracking for consumption rate estimation
+            self.initial_buffer_points = self.points_in_buffer
             
             # Stream remaining chunks while robot executes
             total_chunks = len(waypoint_chunks)
@@ -737,45 +778,67 @@ class PlanningDynamicExecutor:
                     self.logger.error(f"Failed to stream chunk {chunk_idx + 1}")
                     return False
                 
-                progress = ((chunk_idx + 1) / total_chunks) * 100
-                self.logger.info(f"📡 Streamed chunk {chunk_idx + 1}/{total_chunks} ({progress:.1f}%)")
+                # Update progress tracking
+                executed_points += len(chunk)
+                progress = (executed_points / total_points) * 100
+                
+                # Real-time feedback
+                self.logger.info(f"Execution progress: {progress:.1f}% ({executed_points}/{total_points} points)")
+                
+                # Estimate time remaining
+                if self.execution_start_time:
+                    elapsed = time.time() - self.execution_start_time
+                    rate = executed_points / elapsed
+                    remaining = (total_points - executed_points) / rate
+                    self.logger.info(f"Estimated time remaining: {remaining:.1f}s")
+                
+                self.logger.info(f"Streamed chunk {chunk_idx + 1}/{total_chunks} ({progress:.1f}%)")
             
             # Wait for final motion completion
             if not self._wait_for_motion_completion():
                 self.logger.error("Motion completion timeout")
                 return False
                 
-            self.logger.info("✅ Continuous streaming execution completed")
+            self.logger.info("Continuous streaming execution completed")
             return True
             
         except Exception as e:
             self.logger.error(f"Streaming execution failed: {e}")
             return False
     
+    def _estimate_consumption_rate(self):
+        """Estimate robot's waypoint consumption rate"""
+        if not self.execution_start_time or self.points_in_buffer == 0:
+            return 10  # Default estimate
+        
+        elapsed = time.time() - self.execution_start_time
+        if elapsed > 0:
+            # Calculate actual consumption rate
+            consumed_points = self.initial_buffer_points - self.points_in_buffer
+            consumption_rate = consumed_points / elapsed
+            
+            # Log consumption rate updates for debugging
+            if consumption_rate != 10:  # Only log when different from default
+                self.logger.debug(f"Adaptive consumption rate: {consumption_rate:.2f} points/sec (elapsed: {elapsed:.1f}s)")
+            
+            return max(consumption_rate, 1.0)  # Minimum 1 point/second for safety
+        return 10
+
     def _wait_for_buffer_space(self, timeout: float = 5.0) -> bool:
-        """Wait for robot buffer to have space for next chunk"""
+        """Simplified buffer management without querying robot"""
         try:
-            start_time = time.time()
+            # Estimate based on time and adaptive consumption rate
+            points_per_second = self._estimate_consumption_rate()
+            elapsed = time.time() - self.last_chunk_time
+            estimated_consumed = elapsed * points_per_second
             
-            while time.time() - start_time < timeout:
-                if self.stop_requested:
-                    return False
-                
-                # Check buffer status (robot-specific implementation)
-                # For simulation, assume buffer space is available after small delay
-                if not hasattr(self.robot, 'get_buffer_size'):
-                    time.sleep(0.1)  # Small delay for simulation
-                    return True
-                
-                # Real robot: check actual buffer size
-                current_buffer_size = self.robot.get_buffer_size()
-                if current_buffer_size < self.max_buffer_size - self.chunk_size:
-                    return True  # Enough space for next chunk
-                
-                time.sleep(0.05)  # Check every 50ms
+            if self.points_in_buffer - estimated_consumed < self.chunk_size:
+                return True  # Space available
             
-            self.logger.warning("Buffer space timeout - may cause motion gaps")
-            return True  # Continue anyway to avoid deadlock
+            # Wait a calculated amount
+            wait_time = (self.chunk_size - (self.points_in_buffer - estimated_consumed)) / points_per_second
+            time.sleep(min(wait_time, 0.5))
+            return True
             
         except Exception as e:
             self.logger.error(f"Buffer space check failed: {e}")
@@ -784,18 +847,30 @@ class PlanningDynamicExecutor:
     def _stream_chunk_to_buffer(self, chunk: List[ExecutionWaypoint], chunk_number: int) -> bool:
         """Stream a single chunk to robot buffer during execution"""
         try:
+            success = True
+            points_added = 0
+            
             for i, wp in enumerate(chunk):
                 if hasattr(self.robot, 'move_joint_blend_add_point'):
-                    success = self.robot.move_joint_blend_add_point(
+                    if self.robot.move_joint_blend_add_point(
                         wp.joints_deg, 
                         speed=wp.speed, 
                         acceleration=wp.acceleration
-                    )
-                    if not success:
+                    ):
+                        points_added += 1
+                    else:
                         self.logger.error(f"Failed to stream waypoint {i+1} in chunk {chunk_number}")
-                        return False
+                        success = False
+                        break
             
-            return True
+            # Update buffer tracking with actual points added
+            self.points_in_buffer += points_added
+            self.last_chunk_time = time.time()
+            
+            if points_added < len(chunk):
+                self.logger.warning(f"Only added {points_added}/{len(chunk)} points from chunk {chunk_number}")
+            
+            return success
             
         except Exception as e:
             self.logger.error(f"Chunk streaming failed: {e}")
@@ -812,7 +887,7 @@ class PlanningDynamicExecutor:
                 
                 # Check if robot is still moving
                 if hasattr(self.robot, 'sys_status') and hasattr(self.robot.sys_status, 'robot_state'):
-                    if self.robot.sys_status.robot_state == 1:  # IDLE state
+                    if self.robot.sys_status.robot_state == RobotState.IDLE.value:
                         self.logger.info("Robot motion completed")
                         return True
                 else:
@@ -934,7 +1009,7 @@ class PlanningDynamicExecutor:
         """Get current robot joint positions"""
         try:
             if self.robot and hasattr(self.robot, 'sys_status'):
-                return list(self.robot.sys_status.joint_positions_deg)
+                return list(self.robot.sys_status.jnt_ang)
             return [0, 0, 0, 0, 0, 0]  # Default position
         except Exception as e:
             self.logger.error(f"Failed to get current joints: {e}")
@@ -1013,7 +1088,7 @@ class PlanningDynamicExecutor:
                 
             elif mode == "real":
                 # Safety warning for real mode
-                self.logger.warning("⚠️  WARNING: SWITCHING TO REAL ROBOT MODE ⚠️")
+                self.logger.warning("WARNING: SWITCHING TO REAL ROBOT MODE")
                 self.logger.warning("Robot will execute REAL PHYSICAL MOTIONS")
                 self.logger.warning("Ensure workspace is clear and safety systems are active")
                 

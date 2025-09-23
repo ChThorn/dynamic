@@ -3,16 +3,7 @@
 Advanced 3D Interactive Pose Control Visualizer
 
 This tool combines a multi-view 2D plotting interface for precise point definition
-with the back-end logic for ge            # Add reachability constraints based on empirically validated robot capabilities
-            # From extensive testing: 500mm reliable baseline, 600mm extended limit, 650mm conservative max
-            # Original workspace-based calculation was overly optimistic
-            # workspace_radius_m = min(abs(self.workspace_limits['x_max']), abs(self.workspace_limits['y_max']))
-            
-            self.reachability_limits = {
-                'max_radius_mm': 650,        # Conservative maximum with headroom (empirically tested)
-                'warning_radius_mm': 600,    # Extended reach limit (requires optimized IK parameters)
-                'safe_radius_mm': 500,       # Reliable baseline reach validated in testing
-            }ot TCP poses, now with rotational adjustment.
+with the back-end logic for generating TCP poses, now with rotational adjustment.
 
 Features:
 - Self-contained with local calibration data (no external dependencies)
@@ -660,16 +651,16 @@ class AdvancedPoseVisualizer:
             violations.append(f"Warning: {validation['distance_mm']:.1f}mm from base (recommended ≤{self.reachability_limits['warning_radius_mm']:.1f}mm)")
         
         if violations:
-            warning_msg = f"⚠️ Position adjusted for robot constraints:\n" + "\n".join(violations)
+            warning_msg = f"WARNING: Position adjusted for robot constraints:\n" + "\n".join(violations)
             logger.warning(warning_msg)
             
             # Update plot title based on constraint type
             if not validation['reachable']:
-                self.ax_3d.set_title(f"⚠️ Position limited to {self.robot_model} reachable zone")
+                self.ax_3d.set_title(f"WARNING: Position limited to {self.robot_model} reachable zone")
             elif validation['warning_zone']:
-                self.ax_3d.set_title(f"⚠️ Position in {self.robot_model} warning zone - use caution")
+                self.ax_3d.set_title(f"WARNING: Position in {self.robot_model} warning zone - use caution")
             else:
-                self.ax_3d.set_title(f"⚠️ Position constrained to {self.robot_model} workspace")
+                self.ax_3d.set_title(f"WARNING: Position constrained to {self.robot_model} workspace")
             plt.pause(0.1)  # Brief pause to show warning
 
     def _draw_coordinate_frame(self, T, name, colors):
@@ -899,13 +890,16 @@ class AdvancedPoseVisualizer:
         print("  • Press 'o' to toggle initial orientation mode.")
         print("  • Press 'q' to quit.")
         print("\nMODES:")
-        print("  🤖 TCP Mode: Position robot Tool Center Point directly")
-        print("  🦾 Gripper Mode: Position gripper tip (85mm offset auto-applied)")
+        print("  TCP Mode: Position robot Tool Center Point directly")
+        print("  Gripper Mode: Position gripper tip (85mm offset auto-applied)")
         print("="*70)
-        try: plt.show()
-        except KeyboardInterrupt: print("\nExiting...")
+        try:
+            plt.show()
+        except KeyboardInterrupt:
+            print("\nExiting...")
         finally:
-            if self.robot_poses: self.export_poses()
+            if self.robot_poses:
+                self.export_poses()
 
 def main():
     try:

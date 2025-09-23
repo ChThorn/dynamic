@@ -27,18 +27,19 @@ import logging
 import time
 from typing import List, Tuple, Optional
 
-# Add paths for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'kinematics', 'src'))
+# Configure project-root imports
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 # Import kinematics modules
-from forward_kinematic import ForwardKinematics
-from inverse_kinematic import InverseKinematics
+from kinematics.src.forward_kinematic import ForwardKinematics
+from kinematics.src.inverse_kinematic import InverseKinematics
 
 # Import planning modules
-from motion_planner import MotionPlanner, PlanningStrategy, PlanningStatus
-from path_planner import PathPlanner
-from trajectory_planner import TrajectoryPlanner
+from planning.src.motion_planner import MotionPlanner, PlanningStrategy, PlanningStatus
+from planning.src.path_planner import PathPlanner
+from planning.src.trajectory_planner import TrajectoryPlanner
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -66,7 +67,7 @@ def create_pose_matrix(position: np.ndarray, orientation: np.ndarray = None) -> 
 def demo_gripper_integration():
     """Demonstrate gripper tool integration with motion planning."""
     
-    print("🤖 GRIPPER-AWARE MOTION PLANNING DEMO")
+    print("GRIPPER-AWARE MOTION PLANNING DEMO")
     print("=" * 60)
     
     # Initialize kinematics
@@ -95,7 +96,7 @@ def demo_gripper_integration():
     print("-" * 40)
     success = fk.attach_tool("default_gripper")
     if success:
-        print(f"✅ Tool attached: {fk.is_tool_attached()}")
+        print(f"Tool attached: {fk.is_tool_attached()}")
         tool_info = fk.get_tool_info()
         print(f"Tool: {tool_info['name']}")
         print(f"Offset: {tool_info['offset_translation']} m")
@@ -130,7 +131,7 @@ def demo_gripper_integration():
     planning_time = time.time() - start_time
     
     if result.status == PlanningStatus.SUCCESS:
-        print(f"✅ Motion planned successfully")
+        print(f"Motion planned successfully")
         print(f"Planning time: {planning_time*1000:.1f} ms")
         print(f"Waypoints: {len(result.plan.joint_waypoints)}")
         print(f"Strategy used: {result.plan.strategy_used.value}")
@@ -145,7 +146,7 @@ def demo_gripper_integration():
         print(f"Start tool position: [{T_start[0,3]:.4f}, {T_start[1,3]:.4f}, {T_start[2,3]:.4f}] m")
         print(f"End tool position: [{T_end[0,3]:.4f}, {T_end[1,3]:.4f}, {T_end[2,3]:.4f}] m")
     else:
-        print(f"❌ Motion planning failed: {result.error_message}")
+        print(f"Motion planning failed: {result.error_message}")
     
     print("\n4. CARTESIAN MOTION WITH GRIPPER")
     print("-" * 40)
@@ -168,7 +169,7 @@ def demo_gripper_integration():
     planning_time = time.time() - start_time
     
     if cart_result.status == PlanningStatus.SUCCESS:
-        print(f"✅ Cartesian motion planned successfully")
+        print(f"Cartesian motion planned successfully")
         print(f"Planning time: {planning_time*1000:.1f} ms")
         print(f"Waypoints: {len(cart_result.plan.joint_waypoints)}")
         
@@ -183,7 +184,7 @@ def demo_gripper_integration():
         position_error = np.linalg.norm(final_tool_pos - pick_position)
         print(f"Position error: {position_error*1000:.2f} mm")
     else:
-        print(f"❌ Cartesian planning failed: {cart_result.error_message}")
+        print(f"Cartesian planning failed: {cart_result.error_message}")
     
     print("\n5. PICK AND PLACE SEQUENCE")
     print("-" * 40)
@@ -217,7 +218,7 @@ def demo_gripper_integration():
         planning_time = time.time() - start_time
         
         if phase_result.status == PlanningStatus.SUCCESS:
-            print(f"  ✅ Planned in {planning_time*1000:.1f} ms, {len(phase_result.plan.joint_waypoints)} waypoints")
+            print(f"  Planned in {planning_time*1000:.1f} ms, {len(phase_result.plan.joint_waypoints)} waypoints")
             current_config = phase_result.plan.joint_waypoints[-1]
             
             # Verify position
@@ -226,12 +227,12 @@ def demo_gripper_integration():
             error = np.linalg.norm(achieved_pos - target_pos)
             print(f"  Position error: {error*1000:.2f} mm")
         else:
-            print(f"  ❌ Failed: {phase_result.error_message}")
+            print(f"  Failed: {phase_result.error_message}")
             all_plans_success = False
             break
     
     if all_plans_success:
-        print("✅ Complete pick and place sequence planned successfully!")
+        print("Complete pick and place sequence planned successfully!")
     
     print("\n6. TOOL DETACHMENT DEMO")
     print("-" * 40)
@@ -286,15 +287,15 @@ def demo_gripper_integration():
     print(f"  Z: [{np.min(tool_positions[:,2]):.3f}, {np.max(tool_positions[:,2]):.3f}] m")
     
     print("\n" + "=" * 60)
-    print("🎉 GRIPPER INTEGRATION DEMO COMPLETE")
+    print("GRIPPER INTEGRATION DEMO COMPLETE")
     print("\nKey Integration Features Demonstrated:")
-    print("✅ Seamless tool attachment/detachment")
-    print("✅ Motion planning with gripper considerations")
-    print("✅ Cartesian planning for tool frame targets")
-    print("✅ Pick and place sequence planning")
-    print("✅ Workspace analysis with/without tools")
-    print("✅ Perfect TCP consistency maintenance")
-    print("✅ Production-ready gripper integration")
+    print("Seamless tool attachment/detachment")
+    print("Motion planning with gripper considerations")
+    print("Cartesian planning for tool frame targets")
+    print("Pick and place sequence planning")
+    print("Workspace analysis with/without tools")
+    print("Perfect TCP consistency maintenance")
+    print("Production-ready gripper integration")
     
     # Get final statistics
     stats = motion_planner.get_statistics()

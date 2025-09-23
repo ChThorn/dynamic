@@ -18,14 +18,16 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def test_fk_ik_consistency():
     """Test FK-IK mathematical consistency for position and orientation"""
-    print("🔍 FK-IK CONSISTENCY VALIDATION")
+    print("FK-IK CONSISTENCY VALIDATION")
     print("="*50)
     
     try:
-        # Import kinematics modules
-        sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'kinematics', 'src'))
-        from forward_kinematic import ForwardKinematics
-        from inverse_kinematic import FastIK
+        # Import kinematics modules (project-root based)
+        PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        if PROJECT_ROOT not in sys.path:
+            sys.path.insert(0, PROJECT_ROOT)
+        from kinematics.src.forward_kinematic import ForwardKinematics
+        from kinematics.src.inverse_kinematic import FastIK
         
         # Initialize FK and IK
         fk = ForwardKinematics()
@@ -101,7 +103,7 @@ def test_fk_ik_consistency():
                 if not valid:
                     all_valid = False
                 
-                status = "✅ VALID" if valid else "⚠️  TOLERANCE"
+                status = "VALID" if valid else "TOLERANCE"
                 print(f"Config {i+1} ({description}):")
                 print(f"  {status}")
                 print(f"  Position: [{pos_fk[0]:.1f}, {pos_fk[1]:.1f}, {pos_fk[2]:.1f}] mm")
@@ -110,39 +112,40 @@ def test_fk_ik_consistency():
                 print(f"  FK-IK rot error: {rot_error*180/np.pi:.6f}°")
                 print()
             else:
-                print(f"Config {i+1} ({description}): ❌ IK FAILED")
+                print(f"Config {i+1} ({description}): IK FAILED")
                 all_valid = False
                 print()
         
-        print("🎯 FK-IK CONSISTENCY RESULTS:")
+        print("FK-IK CONSISTENCY RESULTS:")
         print(f"  Maximum position error: {max_pos_error:.6f} mm")
         print(f"  Maximum rotation error: {max_rot_error*180/np.pi:.6f}°")
         
         if all_valid:
-            print("  ✅ ALL CONFIGURATIONS: FK-IK mathematically consistent")
+            print("  ALL CONFIGURATIONS: FK-IK mathematically consistent")
         else:
-            print("  ⚠️  SOME CONFIGURATIONS: Check tolerance or singularities")
-            
-        return all_valid, max_pos_error, max_rot_error
+            print("  SOME CONFIGURATIONS: Check tolerance or singularities")
         
+        return all_valid, max_pos_error, max_rot_error
     except Exception as e:
-        print(f"❌ Error during FK-IK consistency test: {e}")
+        print(f"Error during FK-IK consistency test: {e}")
         return False, float('inf'), float('inf')
 
 def test_waypoint_path_consistency(waypoints):
     """Test FK-IK consistency for intermediate waypoints along a path"""
-    print("\n🛣️  WAYPOINT PATH FK-IK VALIDATION")
+    print("\nWAYPOINT PATH FK-IK VALIDATION")
     print("="*50)
     
     if not waypoints or len(waypoints) < 2:
-        print("❌ Insufficient waypoints for path testing")
+        print("Insufficient waypoints for path testing")
         return False
     
     try:
-        # Import kinematics modules
-        sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'kinematics', 'src'))
-        from forward_kinematic import ForwardKinematics
-        from inverse_kinematic import FastIK
+        # Import kinematics modules (project-root based)
+        PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        if PROJECT_ROOT not in sys.path:
+            sys.path.insert(0, PROJECT_ROOT)
+        from kinematics.src.forward_kinematic import ForwardKinematics
+        from kinematics.src.inverse_kinematic import FastIK
         
         fk = ForwardKinematics()
         ik = FastIK(fk)
@@ -170,10 +173,10 @@ def test_waypoint_path_consistency(waypoints):
                 pos_error = np.linalg.norm(pos_verify - pos_fk)
                 max_error = max(max_error, pos_error)
                 
-                status = "✅" if pos_error < 0.001 else "⚠️"
+                status = "OK" if pos_error < 0.001 else "WARN"
                 print(f"  Waypoint {i+1}: {status} Error: {pos_error:.6f} mm - TCP: [{pos_fk[0]:.1f}, {pos_fk[1]:.1f}, {pos_fk[2]:.1f}]")
             else:
-                print(f"  Waypoint {i+1}: ❌ IK Failed")
+                print(f"  Waypoint {i+1}: IK Failed")
                 all_valid = False
         
         # Test intermediate points between waypoints
@@ -207,21 +210,20 @@ def test_waypoint_path_consistency(waypoints):
                         segment_valid = False
                         all_valid = False
                 
-                print("✅ Valid" if segment_valid else "❌ Invalid")
+                print("Valid" if segment_valid else "Invalid")
         
-        print(f"\n🎯 PATH CONSISTENCY RESULTS:")
+        print(f"\nPATH CONSISTENCY RESULTS:")
         print(f"  Maximum error along path: {max_error:.6f} mm")
-        print(f"  Path validation: {'✅ PASSED' if all_valid else '❌ FAILED'}")
+        print(f"  Path validation: {'PASSED' if all_valid else 'FAILED'}")
         
         return all_valid
-        
     except Exception as e:
-        print(f"❌ Error during path consistency test: {e}")
+        print(f"Error during path consistency test: {e}")
         return False
 
 def test_motion_planning_with_fk_ik_validation():
     """Test motion planning success with FK-IK validation of generated waypoints"""
-    print("\n🧪 MOTION PLANNING + FK-IK VALIDATION")
+    print("\nMOTION PLANNING + FK-IK VALIDATION")
     print("="*50)
     
     try:
@@ -248,13 +250,13 @@ def test_motion_planning_with_fk_ik_validation():
         
         for pos_mm, rot_deg, description in test_positions:
             distance = np.sqrt(pos_mm[0]**2 + pos_mm[1]**2)
-            print(f"\n🎯 {description}: {pos_mm} mm, {rot_deg}° (distance: {distance:.1f}mm)")
+            print(f"\nTarget: {description}: {pos_mm} mm, {rot_deg}° (distance: {distance:.1f}mm)")
             
             try:
                 plan = planner.plan_motion(home_joints, pos_mm, rot_deg)
                 
                 if plan.success:
-                    print(f"   ✅ MOTION PLANNING SUCCESS: {len(plan.waypoints)} waypoints")
+                    print(f"   MOTION PLANNING SUCCESS: {len(plan.waypoints)} waypoints")
                     success_count += 1
                     
                     # Extract waypoints for FK-IK validation
@@ -267,43 +269,43 @@ def test_motion_planning_with_fk_ik_validation():
                     
                     if waypoints:
                         waypoint_collections.append((description, waypoints))
-                        print(f"   📋 Collected {len(waypoints)} waypoints for FK-IK validation")
+                        print(f"   Collected {len(waypoints)} waypoints for FK-IK validation")
                         
                         # Quick FK-IK validation of first and last waypoint
                         if len(waypoints) >= 2:
                             first_wp = waypoints[0]
                             last_wp = waypoints[-1]
-                            print(f"   🔍 Start joints: {[f'{j:.1f}' for j in first_wp[:6]]}")
-                            print(f"   🎯 End joints: {[f'{j:.1f}' for j in last_wp[:6]]}")
+                            print(f"   Start joints: {[f'{j:.1f}' for j in first_wp[:6]]}")
+                            print(f"   End joints: {[f'{j:.1f}' for j in last_wp[:6]]}")
                     
                 else:
-                    print(f"   ❌ MOTION PLANNING FAILED: {plan.error_message}")
+                    print(f"   MOTION PLANNING FAILED: {plan.error_message}")
                     
             except Exception as e:
-                print(f"   ❌ EXCEPTION: {e}")
+                print(f"   EXCEPTION: {e}")
         
-        print(f"\n📊 MOTION PLANNING RESULTS:")
+        print(f"\nMOTION PLANNING RESULTS:")
         print(f"   Successful: {success_count}/{len(test_positions)}")
         print(f"   Success rate: {success_count/len(test_positions)*100:.1f}%")
         
         # Validate waypoints with FK-IK consistency
         if waypoint_collections:
-            print(f"\n🔍 VALIDATING WAYPOINTS FROM SUCCESSFUL PLANS:")
+            print(f"\nVALIDATING WAYPOINTS FROM SUCCESSFUL PLANS:")
             for description, waypoints in waypoint_collections:
-                print(f"\n📋 Path: {description}")
+                print(f"\nPath: {description}")
                 path_valid = test_waypoint_path_consistency(waypoints)
                 if not path_valid:
-                    print(f"   ⚠️  FK-IK consistency issues detected in {description}")
+                    print(f"   WARNING: FK-IK consistency issues detected in {description}")
         
         return success_count, len(test_positions), waypoint_collections
         
     except Exception as e:
-        print(f"❌ Error during motion planning test: {e}")
+        print(f"Error during motion planning test: {e}")
         return 0, 0, []
 
 def test_reachability_analysis():
     """Test reachability limits and problematic positions"""
-    print(f"\n🔍 REACHABILITY ANALYSIS")
+    print(f"\nREACHABILITY ANALYSIS")
     print("="*50)
     
     try:
@@ -331,21 +333,21 @@ def test_reachability_analysis():
             actual_distance = np.sqrt(pos_mm[0]**2 + pos_mm[1]**2)
             rot_deg = [180.0, 0.0, 0.0]
             
-            print(f"\n🎯 {description}: {pos_mm} mm (actual: {actual_distance:.1f}mm)")
+            print(f"\nTarget: {description}: {pos_mm} mm (actual: {actual_distance:.1f}mm)")
             
             try:
                 plan = planner.plan_motion(home_joints, pos_mm, rot_deg)
                 
                 if plan.success:
-                    print(f"   ✅ SUCCESS: {len(plan.waypoints)} waypoints")
+                    print(f"   SUCCESS: {len(plan.waypoints)} waypoints")
                     reachable_limit = max(reachable_limit, actual_distance)
                 else:
-                    print(f"   ❌ FAILED: {plan.error_message}")
+                    print(f"   FAILED: {plan.error_message}")
                     
             except Exception as e:
-                print(f"   ❌ EXCEPTION: {e}")
+                print(f"   EXCEPTION: {e}")
         
-        print(f"\n📊 REACHABILITY RESULTS:")
+        print(f"\nREACHABILITY RESULTS:")
         print(f"   Reliable reach limit: ~{reachable_limit:.0f}mm")
         print(f"   URDF theoretical limit: 730mm")
         print(f"   Practical workspace: {reachable_limit:.0f}mm / 730mm = {reachable_limit/730*100:.1f}%")
@@ -353,12 +355,12 @@ def test_reachability_analysis():
         return reachable_limit
         
     except Exception as e:
-        print(f"❌ Error during reachability analysis: {e}")
+        print(f"Error during reachability analysis: {e}")
         return 0
 
 def main():
     """Run comprehensive test suite"""
-    print("🤖 COMPREHENSIVE MONITORING PACKAGE VALIDATION")
+    print("COMPREHENSIVE MONITORING PACKAGE VALIDATION")
     print("Testing FK-IK consistency, motion planning, and coordinate transformation")
     print("=" * 80)
     
@@ -373,46 +375,46 @@ def main():
     # 2. Test motion planning with waypoint validation
     success_count, total_tests, waypoint_collections = test_motion_planning_with_fk_ik_validation()
     if success_count < total_tests:
-        print(f"⚠️  Motion planning success rate: {success_count/total_tests*100:.1f}%")
+        print(f"WARNING: Motion planning success rate: {success_count/total_tests*100:.1f}%")
     
     # 3. Test reachability limits
     reach_limit = test_reachability_analysis()
     
     # 4. Overall summary
-    print(f"\n🎯 COMPREHENSIVE VALIDATION SUMMARY")
+    print(f"\nCOMPREHENSIVE VALIDATION SUMMARY")
     print("=" * 60)
-    print(f"✅ FK-IK Mathematical Consistency:")
+    print(f"FK-IK Mathematical Consistency:")
     print(f"   Position accuracy: {max_pos_err:.6f} mm")
     print(f"   Orientation accuracy: {max_rot_err*180/np.pi:.6f}°")
-    print(f"   Status: {'✅ PERFECT' if fk_ik_valid else '⚠️  CHECK TOLERANCES'}")
+    print(f"   Status: {'PERFECT' if fk_ik_valid else 'CHECK TOLERANCES'}")
     
-    print(f"\n✅ Motion Planning Capability:")
+    print(f"\nMotion Planning Capability:")
     print(f"   Success rate: {success_count}/{total_tests} ({success_count/total_tests*100:.1f}%)")
-    print(f"   Waypoint validation: {'✅ PASSED' if waypoint_collections else '⚠️  NO WAYPOINTS'}")
+    print(f"   Waypoint validation: {'PASSED' if waypoint_collections else 'NO WAYPOINTS'}")
     
-    print(f"\n✅ Workspace Analysis:")
+    print(f"\nWorkspace Analysis:")
     print(f"   Reliable reach: {reach_limit:.0f}mm")
     print(f"   Theoretical limit: 730mm") 
     print(f"   Workspace utilization: {reach_limit/730*100:.1f}%")
     
-    print(f"\n🎯 OVERALL SYSTEM STATUS:")
+    print(f"\nOVERALL SYSTEM STATUS:")
     if overall_success and success_count > 0 and reach_limit > 400:
-        print("   🎉 EXCELLENT: Complete system validation PASSED")
+        print("   EXCELLENT: Complete system validation PASSED")
         print("   • Mathematical accuracy: Perfect")
         print("   • Motion planning: Functional") 
         print("   • Workspace coverage: Good")
         print("   • Ready for production use!")
     elif success_count > 0:
-        print("   ✅ GOOD: Core functionality validated")
+        print("   GOOD: Core functionality validated")
         print("   • Some limitations in reach or planning")
         print("   • Suitable for most applications")
     else:
-        print("   ⚠️  ISSUES: Validation revealed problems")
+        print("   ISSUES: Validation revealed problems")
         print("   • Check coordinate transformations")
         print("   • Verify workspace constraints")
         print("   • Review constraint configurations")
     
-    print(f"\n📋 NEXT STEPS:")
+    print(f"\nNEXT STEPS:")
     print("   • Use test_poses_selection.py for interactive pose selection")
     print("   • Monitor planning success rates in production")
     print("   • Consider constraint tuning if reach limits are too conservative")

@@ -124,13 +124,13 @@ class PickAndPlaceExecutor:
                 
                 if plan.success:
                     if attempt > 0:
-                        print(f"  ✅ {step_name} succeeded on attempt {attempt + 1}")
+                        print(f"  {step_name} succeeded on attempt {attempt + 1}")
                     return True, plan
                 else:
-                    print(f"  ⚠️ {step_name} attempt {attempt + 1} failed: {plan.error_message}")
+                    print(f"  {step_name} attempt {attempt + 1} failed: {plan.error_message}")
                     
             except Exception as e:
-                print(f"  ❌ {step_name} attempt {attempt + 1} exception: {str(e)}")
+                print(f"  {step_name} attempt {attempt + 1} exception: {str(e)}")
             
             # Wait before retry (except last attempt)
             if attempt < self.config.max_retries - 1:
@@ -167,7 +167,7 @@ class PickAndPlaceExecutor:
         steps_completed = []
         robot_programs = []
         
-        print("🤖 PICK AND PLACE EXECUTION")
+        print("PICK AND PLACE EXECUTION")
         print("=" * 30)
         
         # Validate inputs
@@ -183,7 +183,7 @@ class PickAndPlaceExecutor:
         if not valid_place:
             return PickPlaceResult(PickPlaceStatus.INVALID_INPUT, False, 0.0, [], msg_place)
         
-        print(f"✅ Input validation passed")
+        print(f"Input validation passed")
         print(f"Current TCP: {current_tcp_position_mm} mm, {current_tcp_orientation_deg}°")
         print(f"Pick target: {pick_position_mm} mm, {pick_orientation_deg}°")  
         print(f"Place target: {place_position_mm} mm, {place_orientation_deg}°")
@@ -192,7 +192,7 @@ class PickAndPlaceExecutor:
         
         try:
             # Step 1: Approach pick position
-            print(f"\n📍 STEP 1: Approach pick position")
+            print(f"\nSTEP 1: Approach pick position")
             approach_pick_pos = pick_position_mm.copy()
             approach_pick_pos[2] += self.config.approach_height_mm
             
@@ -207,10 +207,10 @@ class PickAndPlaceExecutor:
             steps_completed.append("approach_pick")
             robot_programs.append(plan.generate_robot_program(self.config.speed_approach_percent))
             current_joints = plan.waypoints[-1].joints_deg
-            print(f"  ✅ Approach pick: {len(plan.waypoints)} waypoints, {plan.execution_time_sec:.2f}s")
+            print(f"  Approach pick: {len(plan.waypoints)} waypoints, {plan.execution_time_sec:.2f}s")
             
             # Step 2: Move to pick position
-            print(f"\n🎯 STEP 2: Move to pick position")
+            print(f"\nSTEP 2: Move to pick position")
             success, plan = self.plan_motion_with_retry(
                 current_joints, pick_position_mm, pick_orientation_deg, "Pick"
             )
@@ -222,10 +222,10 @@ class PickAndPlaceExecutor:
             steps_completed.append("pick")
             robot_programs.append(plan.generate_robot_program(self.config.speed_pick_place_percent))
             current_joints = plan.waypoints[-1].joints_deg
-            print(f"  ✅ Pick: {len(plan.waypoints)} waypoints, {plan.execution_time_sec:.2f}s")
+            print(f"  Pick: {len(plan.waypoints)} waypoints, {plan.execution_time_sec:.2f}s")
             
             # Step 3: Retreat from pick
-            print(f"\n⬆️ STEP 3: Retreat from pick")
+            print(f"\nSTEP 3: Retreat from pick")
             retreat_pick_pos = pick_position_mm.copy()
             retreat_pick_pos[2] += self.config.retreat_height_mm
             
@@ -240,10 +240,10 @@ class PickAndPlaceExecutor:
             steps_completed.append("retreat_pick")
             robot_programs.append(plan.generate_robot_program(self.config.speed_retreat_percent))
             current_joints = plan.waypoints[-1].joints_deg
-            print(f"  ✅ Retreat pick: {len(plan.waypoints)} waypoints, {plan.execution_time_sec:.2f}s")
+            print(f"  Retreat pick: {len(plan.waypoints)} waypoints, {plan.execution_time_sec:.2f}s")
             
             # Step 4: Approach place position
-            print(f"\n📍 STEP 4: Approach place position")
+            print(f"\nSTEP 4: Approach place position")
             approach_place_pos = place_position_mm.copy()
             approach_place_pos[2] += self.config.approach_height_mm
             
@@ -258,10 +258,10 @@ class PickAndPlaceExecutor:
             steps_completed.append("approach_place")
             robot_programs.append(plan.generate_robot_program(self.config.speed_approach_percent))
             current_joints = plan.waypoints[-1].joints_deg
-            print(f"  ✅ Approach place: {len(plan.waypoints)} waypoints, {plan.execution_time_sec:.2f}s")
+            print(f"  Approach place: {len(plan.waypoints)} waypoints, {plan.execution_time_sec:.2f}s")
             
             # Step 5: Move to place position
-            print(f"\n🎯 STEP 5: Move to place position")
+            print(f"\nSTEP 5: Move to place position")
             success, plan = self.plan_motion_with_retry(
                 current_joints, place_position_mm, place_orientation_deg, "Place"
             )
@@ -273,10 +273,10 @@ class PickAndPlaceExecutor:
             steps_completed.append("place")
             robot_programs.append(plan.generate_robot_program(self.config.speed_pick_place_percent))
             current_joints = plan.waypoints[-1].joints_deg
-            print(f"  ✅ Place: {len(plan.waypoints)} waypoints, {plan.execution_time_sec:.2f}s")
+            print(f"  Place: {len(plan.waypoints)} waypoints, {plan.execution_time_sec:.2f}s")
             
             # Step 6: Retreat from place
-            print(f"\n⬆️ STEP 6: Retreat from place")
+            print(f"\nSTEP 6: Retreat from place")
             retreat_place_pos = place_position_mm.copy()
             retreat_place_pos[2] += self.config.retreat_height_mm
             
@@ -291,11 +291,11 @@ class PickAndPlaceExecutor:
             steps_completed.append("retreat_place")
             robot_programs.append(plan.generate_robot_program(self.config.speed_retreat_percent))
             current_joints = plan.waypoints[-1].joints_deg
-            print(f"  ✅ Retreat place: {len(plan.waypoints)} waypoints, {plan.execution_time_sec:.2f}s")
+            print(f"  Retreat place: {len(plan.waypoints)} waypoints, {plan.execution_time_sec:.2f}s")
             
             # Step 7: Return home (optional)
             if return_home:
-                print(f"\n🏠 STEP 7: Return to home position")
+                print(f"\nSTEP 7: Return to home position")
                 # Return to original TCP position and orientation
                 success, plan = self.plan_motion_with_retry(
                     current_joints, current_tcp_position_mm, current_tcp_orientation_deg, "Return home"
@@ -307,10 +307,10 @@ class PickAndPlaceExecutor:
                 
                 steps_completed.append("return_home")
                 robot_programs.append(plan.generate_robot_program(self.config.speed_approach_percent))
-                print(f"  ✅ Return home: {len(plan.waypoints)} waypoints, {plan.execution_time_sec:.2f}s")
+                print(f"  Return home: {len(plan.waypoints)} waypoints, {plan.execution_time_sec:.2f}s")
             
             total_time = time.time() - start_time
-            print(f"\n✅ PICK AND PLACE COMPLETE!")
+            print(f"\nPICK AND PLACE COMPLETE!")
             print(f"Total steps: {len(steps_completed)}")
             print(f"Total time: {total_time:.2f} seconds")
             
@@ -334,7 +334,7 @@ class PickAndPlaceExecutor:
 
 def demo_pick_and_place():
     """Demonstrate pick and place operation."""
-    print("🔄 PICK AND PLACE DEMONSTRATION")
+    print("PICK AND PLACE DEMONSTRATION")
     print("=" * 35)
     
     # Configuration
@@ -348,7 +348,7 @@ def demo_pick_and_place():
     
     # Initialize executor
     executor = PickAndPlaceExecutor(config)
-    print("✅ Pick and place executor initialized")
+    print("Pick and place executor initialized")
     
     # Define starting point (very safe joints configuration - extended pose)
     current_joints = [0.0, -60.0, 90.0, 0.0, 30.0, 0.0]  # degrees - more extended config
@@ -367,7 +367,7 @@ def demo_pick_and_place():
     place_pos = [200.0, 400.0, 350.0]      # mm (shorter reach, higher Z)
     place_rot = [180.0, 0.0, 45.0]         # gripper down, rotated 45°
     
-    print(f"\n📋 Operation Details:")
+    print(f"\nOperation Details:")
     print(f"Current joints: {current_joints} degrees")
     print(f"Current TCP: {[round(x,1) for x in current_tcp_pos]} mm, {[round(x,1) for x in current_tcp_rot]}°")
     print(f"Pick target: {pick_pos} mm, {pick_rot}°")
@@ -381,14 +381,14 @@ def demo_pick_and_place():
     )
     
     # Show results
-    print(f"\n📊 RESULTS:")
+    print(f"\nRESULTS:")
     print(f"Status: {result.status.value}")
-    print(f"Success: {'✅' if result.success else '❌'}")
+    print(f"Success: {'SUCCESS' if result.success else 'FAILED'}")
     print(f"Steps completed: {len(result.steps_completed)}/{7}")  
     print(f"Total time: {result.total_time_sec:.2f} seconds")
     
     if result.success:
-        print(f"\n🤖 ROBOT PROGRAMS GENERATED:")
+        print(f"\nROBOT PROGRAMS GENERATED:")
         for i, program in enumerate(result.robot_programs):
             step_name = result.steps_completed[i] if i < len(result.steps_completed) else f"step_{i+1}"
             print(f"\n--- {step_name.upper()} PROGRAM ---")
@@ -398,9 +398,9 @@ def demo_pick_and_place():
             if len(lines) > 8:
                 print("...")
     else:
-        print(f"❌ Error: {result.error_message}")
+        print(f"Error: {result.error_message}")
     
-    print(f"\n✅ Pick and place demonstration complete!")
+    print(f"\nPick and place demonstration complete!")
 
 if __name__ == "__main__":
     demo_pick_and_place()
