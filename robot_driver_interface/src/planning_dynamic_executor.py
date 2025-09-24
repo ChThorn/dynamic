@@ -1,15 +1,20 @@
 """
-Planning Dynamic Executor - Integration Bridge
-==============================================
+Planning and Dynamic Execution Engine
+=====================================
 
-This module bridges the motion planning system with the dynamic path execution,
-combining the best of both worlds:
-- Advanced motion planning (collision avoidance, optimization)
-- Dynamic timing-based execution from path_playing_dynamically.py
-- CHUNKED WAYPOINT PROCESSING for robot buffer limitations
+This module serves as the core motion planning and execution engine for the
+robot. It integrates advanced motion planning capabilities with a robust,
+timing-based dynamic execution system.
 
-Author: Robot Control Team  
-Date: September 2025
+Key Responsibilities:
+- **Motion Planning**: Generates collision-free paths to specified target poses
+  using the `clean_robot_interface` motion planner.
+- **Trajectory Generation**: Creates smooth, quintic polynomial trajectories from
+  planned waypoints to ensure continuous velocity and acceleration.
+- **Dynamic Execution**: Executes trajectories on the robot (real or simulated)
+  using a chunked, buffered approach for reliable, continuous motion.
+- **Safety Management**: Operates in a "simulation" mode by default and requires
+  explicit activation for "real" robot control.
 """
 
 import sys
@@ -25,7 +30,8 @@ import numpy as np
 # Add paths for planning module imports - using absolute paths for reliability
 import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
-base_dir = os.path.join(current_dir, '..', '..')
+# Navigate up to the project root 'dynamic/'
+base_dir = os.path.join(current_dir, '..', '..')  # This gets us to 'dynamic/'
 planning_src = os.path.join(base_dir, 'planning', 'src')
 planning_examples = os.path.join(base_dir, 'planning', 'examples')
 kinematics_src = os.path.join(base_dir, 'kinematics', 'src')
@@ -298,77 +304,6 @@ class PlanningDynamicExecutor:
             self.logger.error(f"Motion execution failed: {e}")
             return False
     
-    def execute_pick_and_place_sequence(self, pick_target: PlanningTarget, 
-                                      place_target: PlanningTarget) -> bool:
-        """
-        Execute complete pick and place sequence with planning
-        
-        Args:
-            pick_target: Pick location target
-            place_target: Place location target
-        
-        Returns:
-            True if entire sequence successful
-        """
-        # Safety check: Warn if in real mode
-        if self.operation_mode == "real":
-            self.logger.warning("EXECUTING REAL PICK AND PLACE SEQUENCE")
-        else:
-            self.logger.info("Executing pick and place in SIMULATION mode (safe)")
-            
-        self.logger.info("Starting pick and place sequence")
-        
-        try:
-            # 1. Move to pick approach position
-            pick_approach = PlanningTarget(
-                tcp_position_mm=[pick_target.tcp_position_mm[0], 
-                               pick_target.tcp_position_mm[1],
-                               pick_target.tcp_position_mm[2] + 50],  # 50mm above
-                tcp_rotation_deg=pick_target.tcp_rotation_deg,
-                gripper_mode=pick_target.gripper_mode
-            )
-            
-            if not self.plan_and_execute_motion(pick_approach):
-                self.logger.error("Failed to reach pick approach")
-                return False
-            
-            # 2. Move to pick position
-            if not self.plan_and_execute_motion(pick_target):
-                self.logger.error("Failed to reach pick position")
-                return False
-            
-            # 3. Close gripper (placeholder - needs gripper integration)
-            self.logger.info("Closing gripper")
-            time.sleep(0.5)
-            
-            # 4. Move to place approach position
-            place_approach = PlanningTarget(
-                tcp_position_mm=[place_target.tcp_position_mm[0], 
-                               place_target.tcp_position_mm[1],
-                               place_target.tcp_position_mm[2] + 50],  # 50mm above
-                tcp_rotation_deg=place_target.tcp_rotation_deg,
-                gripper_mode=place_target.gripper_mode
-            )
-            
-            if not self.plan_and_execute_motion(place_approach):
-                self.logger.error("Failed to reach place approach")
-                return False
-            
-            # 5. Move to place position
-            if not self.plan_and_execute_motion(place_target):
-                self.logger.error("Failed to reach place position")
-                return False
-            
-            # 6. Open gripper (placeholder - needs gripper integration)
-            self.logger.info("Opening gripper")
-            time.sleep(0.5)
-            
-            self.logger.info("Pick and place sequence completed")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Pick and place failed: {e}")
-            return False
     
     def _calculate_motion_time(self, planning_waypoints) -> float:
         """Calculate appropriate execution time based on path length"""
@@ -432,8 +367,13 @@ class PlanningDynamicExecutor:
         
         # Calculate joint movement magnitude
         if index > 0:
-            prev_joints = np.array(waypoints[index-1].joints_deg)
-            curr_joints = np.array(waypoints[index].joints_deg)
+            if isinstance(waypoints, np.ndarray):
+                prev_joints = waypoints[index-1]
+                curr_joints = waypoints[index]
+            else:
+                prev_joints = np.array(waypoints[index-1].joints_deg)
+                curr_joints = np.array(waypoints[index].joints_deg)
+            
             joint_movement = np.linalg.norm(curr_joints - prev_joints)
             
             # Adjust speed based on movement magnitude
@@ -550,73 +490,46 @@ class PlanningDynamicExecutor:
             return smooth_trajectory
             
         except ImportError:
-            # Fallback to manual quintic polynomial if scipy not available
-            return self._manual_quintic_interpolation(param_values, joint_values, num_output_points)
+            # Fallback to linear interpolation if scipy not available
+            return self._linear_interpolation(param_values, joint_values, num_output_points)
     
-    def _manual_quintic_interpolation(self, param_values: np.ndarray, 
+    def _linear_interpolation(self, param_values: np.ndarray, 
                                     joint_values: np.ndarray, 
                                     num_output_points: int) -> np.ndarray:
         """
-        Manual quintic polynomial interpolation without scipy dependency
-        
-        Uses quintic polynomial: q(t) = a₀ + a₁t + a₂t² + a₃t³ + a₄t⁴ + a₅t⁵
-        With boundary conditions for smooth motion
+        Linear interpolation as a fallback.
         """
         dense_params = np.linspace(0, 1, num_output_points)
-        
-        # For manual implementation, use simplified approach
-        # S-curve profile for smooth acceleration/deceleration
-        smooth_trajectory = np.zeros(num_output_points)
-        
-        start_value = joint_values[0]
-        end_value = joint_values[-1]
-        total_change = end_value - start_value
-        
-        for i, t in enumerate(dense_params):
-            # Quintic S-curve: smooth acceleration and deceleration
-            if t <= 0.5:
-                # Acceleration phase: quintic polynomial from 0 to 0.5
-                s = 16 * t**5 - 20 * t**4 + 10 * t**3
-            else:
-                # Deceleration phase: quintic polynomial from 0.5 to 1
-                t_shifted = 1 - t
-                s = 1 - (16 * t_shifted**5 - 20 * t_shifted**4 + 10 * t_shifted**3)
-            
-            smooth_trajectory[i] = start_value + total_change * s
-        
-        return smooth_trajectory
+        return np.interp(dense_params, param_values, joint_values)
     
     def _calculate_polynomial_speed(self, trajectory: np.ndarray, 
-                                  index: int, timestamps: np.ndarray) -> float:
-        """Calculate speed based on polynomial trajectory derivatives"""
-        if index == 0 or index >= len(trajectory) - 1:
-            # SPEED FIX: Extra slow at start/end, especially for first motion
-            base_start_end_speed = 0.15 if self.stats['successful_executions'] == 0 else 0.3
-            return base_start_end_speed
+                                   index: int, timestamps: np.ndarray) -> float:
+        """Calculate speed based on polynomial trajectory characteristics"""
+        if len(trajectory) < 3 or index == 0 or index >= len(trajectory) - 1:
+            return 0.5  # Default speed
         
-        # Calculate velocity magnitude from numerical derivative
-        dt = timestamps[index + 1] - timestamps[index - 1]
-        if dt == 0:
-            return 0.25 if self.stats['successful_executions'] == 0 else 0.5
-        
-        # Position change over time interval
-        pos_change = np.linalg.norm(trajectory[index + 1] - trajectory[index - 1])
-        velocity_magnitude = pos_change / dt
-        
-        # SPEED FIX: Reduce all speeds for first motion (initial positioning)
-        speed_reduction = 0.5 if self.stats['successful_executions'] == 0 else 1.0
-        
-        # Map velocity to speed multiplier (0.2 to 0.8)
-        # Higher velocity -> lower speed multiplier for smoother motion
-        if velocity_magnitude > 50:  # High velocity
-            return 0.2 * speed_reduction
-        elif velocity_magnitude > 20:  # Medium velocity
-            return 0.4 * speed_reduction
-        elif velocity_magnitude > 5:   # Low velocity
-            return 0.6 * speed_reduction
-        else:  # Very low velocity
-            return 0.8 * speed_reduction
-    
+        try:
+            dt = timestamps[1] - timestamps[0]  # Assuming uniform spacing
+            if dt == 0:
+                return 0.5
+            
+            # First derivative (velocity) approximation
+            velocity_vector = (trajectory[index + 1] - trajectory[index - 1]) / (2 * dt)
+            velocity_magnitude = np.linalg.norm(velocity_vector)
+            
+            # Map velocity to speed multiplier (0.2 to 0.8)
+            if velocity_magnitude > 50:  # High velocity
+                return 0.2
+            elif velocity_magnitude > 25:  # Medium velocity  
+                return 0.4
+            elif velocity_magnitude > 10:  # Low velocity
+                return 0.6
+            else:  # Very low velocity
+                return 0.8
+                
+        except Exception:
+            return 0.5  # Safe default
+
     def _calculate_polynomial_acceleration(self, trajectory: np.ndarray, 
                                          index: int, timestamps: np.ndarray) -> float:
         """Calculate acceleration based on polynomial trajectory characteristics"""

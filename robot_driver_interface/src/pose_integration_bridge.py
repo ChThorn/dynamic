@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """
 Pose Integration Bridge
+=======================
 
-This module provides seamless integration between the visualizer_tool_TCP
-and planning_dynamic_executor by handling data format conversions and
-providing convenient wrapper functions.
+Connects the interactive pose selection GUI (`visualizer_tool_TCP`) with the
+robot's motion planning and execution engine (`planning_dynamic_executor`).
 
-Features:
-- Automatic pose format conversion
-- Batch pose processing
-- Validation and error handling
-- Simplified workflow integration
-
-Author: Robot Motion Planning Team
-Date: September 22, 2025
+This module acts as a crucial link, translating data between the user-facing
+tool and the backend controller. It simplifies the end-to-end workflow by:
+- Converting pose data from the visualizer's format (meters, rotation vectors)
+  to the planner's format (millimeters, Euler angles).
+- Managing the lifecycle of the visualizer and the planning executor.
+- Providing a high-level API to run the complete "select-plan-execute" sequence.
 """
 
 import numpy as np
@@ -98,39 +96,6 @@ class PoseIntegrationBridge:
             gripper_mode=gripper_mode
         )
     
-    def convert_planning_target_to_visualizer_pose(self, planning_target) -> np.ndarray:
-        """
-        Convert planning target back to visualizer pose format (for round-trip validation).
-        
-        Args:
-            planning_target: PlanningTarget from planning_dynamic_executor
-            
-        Returns:
-            np.ndarray: Pose in visualizer format [x,y,z,rx,ry,rz] (meters, rotation vectors)
-        """
-        try:
-            # Extract position (mm to meters)
-            pos_m = np.array(planning_target.tcp_position_mm) / 1000.0
-            
-            # Extract rotation (degrees to rotation vector)
-            rot_deg = np.array(planning_target.tcp_rotation_deg)
-            rot_rad = np.radians(rot_deg)
-            
-            # Convert Euler angles to rotation vector
-            if np.allclose(rot_rad, 0):
-                rot_vec = np.array([0, 0, 0])
-            else:
-                rotation = R.from_euler('xyz', rot_rad)
-                rot_vec = rotation.as_rotvec()
-            
-            # Combine position and rotation
-            pose = np.concatenate([pos_m, rot_vec])
-            
-            return pose
-            
-        except Exception as e:
-            self.logger.error(f"Failed to convert planning target to visualizer pose: {e}")
-            raise ValueError(f"Invalid planning target conversion: {e}")
     
     def convert_multiple_poses(self, visualizer_poses: List[np.ndarray], 
                              gripper_mode: bool = False) -> List[PlanningTarget]:
@@ -303,8 +268,8 @@ class PoseIntegrationBridge:
             logger.info("Executor shut down")
         
         if self.visualizer:
-            self.visualizer.clear_poses()
-            logger.info("Visualizer cleared")
+            # Note: Visualizer doesn't need explicit clearing - poses are kept for reference
+            logger.info("Visualizer shut down")
         
         logger.info("Pose integration bridge shut down")
 

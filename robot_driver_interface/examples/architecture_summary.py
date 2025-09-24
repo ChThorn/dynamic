@@ -61,7 +61,7 @@ def create_architecture_summary():
     mock_waypoints = []
     for position in raw_waypoints:
         mock_wp = Mock()
-        mock_wp.joint_positions_deg = position.tolist()
+        mock_wp.joints_deg = position.tolist()
         mock_waypoints.append(mock_wp)
     
     executor = PlanningDynamicExecutor(robot_ip="192.168.0.10", operation_mode="simulation")

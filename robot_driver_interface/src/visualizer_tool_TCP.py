@@ -1,28 +1,17 @@
 #!/usr/bin/env python3
 """
-Advanced 3D Interactive Pose Control Visualizer
+Interactive 3D Pose Visualizer
+==============================
 
-This tool combines a multi-view 2D plotting interface for precise point definition
-with the back-end logic for generating robot TCP poses, now with rotational adjustment.
+A Matplotlib-based graphical tool for interactively selecting and defining
+robot TCP (Tool Center Point) poses in a 3D environment.
 
-Features:
-- Self-contained with local calibration data (no external dependencies)
-- Multi-view 2D plotting for position definition  
-- Interactive sliders for orientation control
-- Real-time 3D visualization with coordinate frames
-- Export poses to JSON format
-- Integration with robot calibration data
+Key Features:
+- Multi-view 2D plots for precise X, Y, Z position selection.
+- Interactive sliders for Roll, Pitch, and Yaw orientation control.
+- Real-time 3D visualization of the robot's workspace and target poses.
+- Exports selected poses to a JSON file for use in motion planning.
 
-New Interaction Workflow:
-1.  Click on the X-Y and Y-Z plots to define a point's position.
-2.  A red "preview" point and a colored TCP frame appear.
-3.  Drag the 2D markers or use 'e' for text boxes to adjust the POSITION.
-4.  Use the new Roll, Pitch, and Yaw sliders to adjust the ORIENTATION.
-5.  Press 'Enter' on the plot window to finalize the pose.
-
-Author: Robot Motion Planning Team
-Package: monitoring
-Date: September 16, 2025
 """
 
 import numpy as np
@@ -58,8 +47,8 @@ class visualizer_tool_TCP:
     def __init__(self, calibration_path: str = None, mode: str = "tcp"):
         # Default to local calibration data if no path provided
         if calibration_path is None:
-            # Use local calibration data in monitoring package
-            local_calibration = Path(__file__).parent / "calibration_data" / "improved_calibration_results.json"
+            # Use local calibration data in robot_driver_interface package
+            local_calibration = Path(__file__).parent.parent / "calibration_data" / "improved_calibration_results.json"
             if local_calibration.exists():
                 calibration_path = str(local_calibration)
             else:
@@ -141,7 +130,7 @@ class visualizer_tool_TCP:
         # Log calibration quality metrics if available
         if self.metrics.get('mean_translation_error_mm', 0) > 0:
             logger.info(f"Calibration quality - Translation error: {self.metrics['mean_translation_error_mm']:.2f}mm, "
-                       f"Rotation error: {self.metrics['mean_rotation_error_deg']:.2f}°")
+                       f"Rotation error: {self.metrics['mean_rotation_error_deg']:.2f}deg")
 
     def load_workspace_constraints(self):
         """Load robot workspace constraints from constraints.yaml."""
@@ -207,10 +196,10 @@ class visualizer_tool_TCP:
             
             logger.info(f"Loaded workspace constraints for {self.robot_model}")
             logger.info(f"Workspace: X[{self.workspace_limits['x_min']:.3f}, {self.workspace_limits['x_max']:.3f}], Y[{self.workspace_limits['y_min']:.3f}, {self.workspace_limits['y_max']:.3f}], Z[{self.workspace_limits['z_min']:.3f}, {self.workspace_limits['z_max']:.3f}]")
-            logger.info(f"Reachability: Safe≤{self.reachability_limits['safe_radius_mm']}mm, Warning≤{self.reachability_limits['warning_radius_mm']}mm, Max≤{self.reachability_limits['max_radius_mm']}mm")
+            logger.info(f"Reachability: Safe<={self.reachability_limits['safe_radius_mm']}mm, Warning<={self.reachability_limits['warning_radius_mm']}mm, Max<={self.reachability_limits['max_radius_mm']}mm")
             
             if margin_enabled:
-                logger.info(f"Safety margins applied: X±{margin_x}m, Y±{margin_y}m, Z±{margin_z}m")
+                logger.info(f"Safety margins applied: X+/-{margin_x}m, Y+/-{margin_y}m, Z+/-{margin_z}m")
                 
         except Exception as e:
             logger.warning(f"Could not load workspace constraints: {e}")
@@ -578,19 +567,19 @@ class visualizer_tool_TCP:
         if not validation['reachable']:
             violations.append(f"Distance: {validation['distance_mm']:.1f}mm (max reachable: {self.reachability_limits['max_radius_mm']:.1f}mm)")
         elif validation['warning_zone']:
-            violations.append(f"Warning: {validation['distance_mm']:.1f}mm from base (recommended ≤{self.reachability_limits['warning_radius_mm']:.1f}mm)")
+            violations.append(f"Warning: {validation['distance_mm']:.1f}mm from base (recommended <={self.reachability_limits['warning_radius_mm']:.1f}mm)")
         
         if violations:
-            warning_msg = f"⚠️ Position adjusted for robot constraints:\n" + "\n".join(violations)
+            warning_msg = f"WARNING: Position adjusted for robot constraints:\n" + "\n".join(violations)
             logger.warning(warning_msg)
             
             # Update plot title based on constraint type
             if not validation['reachable']:
-                self.ax_3d.set_title(f"⚠️ Position limited to {self.robot_model} reachable zone")
+                self.ax_3d.set_title(f"WARNING: Position limited to {self.robot_model} reachable zone")
             elif validation['warning_zone']:
-                self.ax_3d.set_title(f"⚠️ Position in {self.robot_model} warning zone - use caution")
+                self.ax_3d.set_title(f"WARNING: Position in {self.robot_model} warning zone - use caution")
             else:
-                self.ax_3d.set_title(f"⚠️ Position constrained to {self.robot_model} workspace")
+                self.ax_3d.set_title(f"WARNING: Position constrained to {self.robot_model} workspace")
             plt.pause(0.1)  # Brief pause to show warning
 
     def _draw_coordinate_frame(self, T, name, colors):
@@ -669,21 +658,21 @@ class visualizer_tool_TCP:
         y_safe = safe_radius * np.sin(theta)
         z_safe = np.full_like(x_safe, z_mid)
         self.ax_3d.plot(x_safe, y_safe, z_safe, 'g-', alpha=0.7, linewidth=2, 
-                       label=f'Safe Zone (≤{self.reachability_limits["safe_radius_mm"]:.0f}mm)')
+                       label=f'Safe Zone (<={self.reachability_limits["safe_radius_mm"]:.0f}mm)')
         
         # Draw warning zone (yellow)
         x_warning = warning_radius * np.cos(theta)
         y_warning = warning_radius * np.sin(theta)
         z_warning = np.full_like(x_warning, z_mid)
         self.ax_3d.plot(x_warning, y_warning, z_warning, 'y-', alpha=0.7, linewidth=2,
-                       label=f'Warning Zone (≤{self.reachability_limits["warning_radius_mm"]:.0f}mm)')
+                       label=f'Warning Zone (<={self.reachability_limits["warning_radius_mm"]:.0f}mm)')
         
         # Draw maximum reachable zone (red)
         x_max = max_radius * np.cos(theta)
         y_max = max_radius * np.sin(theta)
         z_max = np.full_like(x_max, z_mid)
         self.ax_3d.plot(x_max, y_max, z_max, 'r-', alpha=0.7, linewidth=2,
-                       label=f'Max Reach (≤{self.reachability_limits["max_radius_mm"]:.0f}mm)')
+                       label=f'Max Reach (<={self.reachability_limits["max_radius_mm"]:.0f}mm)')
         
         # Add zone legend and annotations
         self.ax_3d.text(0, safe_radius + 0.05, z_mid, 'SAFE', fontsize=8, ha='center', 
@@ -785,19 +774,14 @@ class visualizer_tool_TCP:
         """
         return self.robot_poses.copy()
     
-    def clear_poses(self):
-        """Clear all captured poses."""
-        self.robot_poses.clear()
-        logger.info("All poses cleared")
-    
     def run(self):
         print("\n" + "="*60 + "\nADVANCED 3D INTERACTIVE ROBOT POSE CONTROL\n" + "="*60 + "\nCONTROLS:")
-        print("  • Click/Drag on 2D plots to set POSITION.")
-        print("  • Use sliders at the bottom to set ORIENTATION.")
-        print("  • Press 'e' to show/hide text boxes for precise position.")
-        print("  • Press 'Enter' to finalize the pose.")
-        print("  • Press 'o' to toggle initial orientation mode.")
-        print("  • Press 'q' to quit.\n" + "="*60)
+        print("  - Click/Drag on 2D plots to set POSITION.")
+        print("  - Use sliders at the bottom to set ORIENTATION.")
+        print("  - Press 'e' to show/hide text boxes for precise position.")
+        print("  - Press 'Enter' to finalize the pose.")
+        print("  - Press 'o' to toggle initial orientation mode.")
+        print("  - Press 'q' to quit.\n" + "="*60)
         try: plt.show()
         except KeyboardInterrupt: print("\nExiting...")
         finally:

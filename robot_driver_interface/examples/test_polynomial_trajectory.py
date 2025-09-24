@@ -42,7 +42,7 @@ def create_test_planning_waypoints() -> List:
     
     for position in key_positions:
         mock_wp = Mock()
-        mock_wp.joint_positions_deg = position
+        mock_wp.joints_deg = position
         mock_waypoints.append(mock_wp)
     
     return mock_waypoints
@@ -125,8 +125,8 @@ def create_linear_trajectory(planning_waypoints, total_time: float) -> List[Exec
     linear_waypoints = []
     num_points = 50  # Match polynomial density
     
-    # Extract positions
-    positions = np.array([wp.joint_positions_deg for wp in planning_waypoints])
+    # Extract positions from mock objects
+    positions = np.array([wp.joints_deg for wp in planning_waypoints])
     
     # Linear interpolation
     times = np.linspace(0, total_time, num_points)
@@ -143,10 +143,20 @@ def create_linear_trajectory(planning_waypoints, total_time: float) -> List[Exec
         else:
             interpolated_pos = (1 - alpha) * positions[idx_floor] + alpha * positions[idx_ceil]
         
+        # Calculate varying speed for linear trajectory to show difference
+        # Use simple acceleration/deceleration profile
+        progress = i / (num_points - 1)  # 0 to 1
+        if progress < 0.3:  # Acceleration phase
+            speed = 0.3 + 0.4 * (progress / 0.3)  # 0.3 to 0.7
+        elif progress > 0.7:  # Deceleration phase
+            speed = 0.7 - 0.4 * ((progress - 0.7) / 0.3)  # 0.7 to 0.3
+        else:  # Constant speed phase
+            speed = 0.7
+        
         linear_waypoints.append(ExecutionWaypoint(
             joints_deg=interpolated_pos.tolist(),
             timestamp=time,
-            speed=0.5,
+            speed=speed,
             acceleration=0.8
         ))
     
@@ -293,14 +303,16 @@ def test_polynomial_features(executor):
     
     # Test speed calculation
     print("Testing polynomial speed calculation...")
-    test_trajectory = np.random.rand(10, 6) * 90  # Random trajectory
-    test_times = np.linspace(0, 5, 10)
     
-    speed = executor._calculate_polynomial_speed(test_trajectory, 5, test_times)
+    # Use the correct method name with valid index
+    planning_waypoints_for_speed = create_test_planning_waypoints()
+    speed = executor._calculate_waypoint_speed(planning_waypoints_for_speed, 2)  # Use middle index
     print(f"  Calculated speed: {speed:.3f}")
     
     # Test acceleration calculation  
     print("Testing polynomial acceleration calculation...")
+    test_trajectory = np.random.rand(10, 6) * 90  # Random trajectory
+    test_times = np.linspace(0, 5, 10)
     acceleration = executor._calculate_polynomial_acceleration(test_trajectory, 5, test_times)
     print(f"  Calculated acceleration: {acceleration:.3f}")
     

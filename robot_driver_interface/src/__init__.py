@@ -9,9 +9,6 @@ Main components:
 - visualizer_tool_TCP: Interactive 3D pose selection and visualization
 - pose_integration_bridge: Seamless integration between visualizer and executor
 - Additional core modules for robot control and trajectory generation
-
-Author: Robot Control Team
-Date: September 2025
 """
 
 from .planning_dynamic_executor import (
