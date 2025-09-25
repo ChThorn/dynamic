@@ -142,7 +142,7 @@ class PlanningDynamicExecutor:
         
         # Pre-buffering execution parameters (optimized for continuous motion)
         self.chunk_size = chunk_size  # Configurable waypoints per chunk (default: 100 - optimized chunking)
-        self.max_buffer_size = 20  # Maximum waypoints in robot buffer at once
+        self.max_buffer_size = 25  # Maximum waypoints in robot buffer at once
         self.prefill_ratio = 0.75  # Fill 75% of buffer before starting motion
         self.buffer_low_threshold = 0.4  # Stream new chunks when buffer < 40% full
         

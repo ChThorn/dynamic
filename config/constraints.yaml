@@ -48,7 +48,7 @@ workspace:
 # 3. Workspace limits: Defined in workspace section above
 environment:
   floor_level: 0.0        # Robot base mounted at floor (z=0)
-  wood_thickness: 0.06    # 60mm thick wood surface
+  wood_thickness: 0.05    # 50mm thick wood surface
   wood_area: [1.4, 1.0]   # 1.4m x 1.0m working area
 
 # Self-collision parameters (UPDATED for RB3-730ES-U based on real robot dimensions)
