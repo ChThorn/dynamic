@@ -149,7 +149,7 @@ class PoseIntegrationBridge:
         
         return planning_targets
     
-    def create_executor(self, execution_mode: str = "blend", chunk_size: int = 24) -> PlanningDynamicExecutor:
+    def create_executor(self, execution_mode: str = "blend", chunk_size: int = 23) -> PlanningDynamicExecutor:
         """
         Create and initialize a planning dynamic executor.
         

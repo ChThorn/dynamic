@@ -1,6 +1,38 @@
-*__pycache__/
+# Python
+__pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# Large model files (download via model_manager.py)
+detection/models/yolo/*.pt
+detection/models/sam2/checkpoints/*.pth
+
+# Data files
 *.urdf
-*.txt
+captures/
+clouds/
+clouds_batch/
+test_data/
+
+# Generated files
 *.png
+*.jpg
+*.jpeg
+*.pcd
+*.json
+*.txt
 *.html
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
